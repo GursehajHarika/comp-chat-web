@@ -87,32 +87,23 @@ async function askVapiChat(sessionId, inputText) {
 }
 
 const AGENT_JOIN_REGEX =
-  /(connected with|you are now chatting with|my name is|agent has joined|specialist has joined|vous clavardez maintenant avec|je m'appelle|un agent s'est joint)/i;
+  /(connected with|you are now chatting with|my name is|agent has joined|specialist has joined|representative has joined|vous clavardez maintenant avec|je m'appelle|un agent s'est joint)/i;
 const WAIT_TIME_REGEX =
   /(\b\d+\s*(?:to|-)\s*\d+\s*min(?:ute)?s?\b|\b\d+\s*min(?:ute)?s?\b|position\s*#?\d+|\b\d+\s*in\s*queue\b)/i;
 const HOOPS_REGEX =
   /(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|h)\s*(?:to|-|–|à)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|h))/i;
 
 const IGNORED_BUTTON_REGEX =
-  /^(close|minimize|minimise|maximize|end chat|end|send|envoyer|fermer|réduire|feedback|help|need help\??|ask anna|menu|back|x|×)$/i;
+  /^(close|minimize|minimise|maximize|end chat|end|send|envoyer|fermer|réduire|feedback|help|need help\??|ask anna|menu|back|x|×|privacy|terms|accessibility|clear|reset|download transcript|save transcript)$/i;
+
+const IGNORED_MESSAGE_REGEX =
+  /^(\d{1,2}:\d{2}(\s?[ap]m)?|just now|today|yesterday|delivered|sent|read|typing\.{0,3}|loading\.{0,3}|ask anna|rogers|videotron|vidéotron|virtual assistant|assistant virtuel|type your message|send|envoyer|\d+\/\d+|powered by .+)$/i;
 
 async function findInFrames(page, selector) {
   for (const frame of page.frames()) {
     try {
       const loc = frame.locator(selector).first();
       if (await loc.isVisible({ timeout: 600 })) return loc;
-    } catch (_) {}
-  }
-  return null;
-}
-
-async function findInputWithFrame(page, selector) {
-  for (const frame of page.frames()) {
-    try {
-      const loc = frame.locator(selector).first();
-      if (await loc.isVisible({ timeout: 600 })) {
-        return { frame, locator: loc };
-      }
     } catch (_) {}
   }
   return null;
@@ -173,71 +164,182 @@ async function clickBottomRightLauncher(page) {
   return true;
 }
 
-async function scrapeMessages(page, selector, inputSelector) {
-  const foundInput = await findInputWithFrame(page, inputSelector);
-  const framesToCheck = foundInput ? [foundInput.frame] : page.frames();
-  const texts = [];
+// Dynamically inspects the active chat panel (across frames + open Shadow DOM)
+// Returns: { found, frame, inputEnabled, inputCoords, isTyping, buttons, messages }
+async function inspectChatState(page, inputSelector) {
+  let best = {
+    found: false,
+    frame: null,
+    inputFound: false,
+    inputEnabled: false,
+    inputCoords: null,
+    isTyping: false,
+    buttons: [],
+    messages: [],
+    score: -1
+  };
 
-  for (const frame of framesToCheck) {
-    try {
-      const items = await frame.locator(selector).allInnerTexts();
-      for (const raw of items) {
-        const clean = raw.replace(/\s+/g, ' ').trim();
-        if (clean.length > 2 && clean.length < 800 && !texts.includes(clean)) {
-          texts.push(clean);
-        }
-      }
-    } catch (_) {}
-  }
-  return texts;
-}
-
-// Finds clickable chat option buttons scoped to the chat frame or chat container around #chatMessage
-async function getChatOptionButtons(page, inputSelector) {
-  const found = await findInputWithFrame(page, inputSelector);
-  const frames = found ? [found.frame] : page.frames();
-  const results = [];
-
-  for (const frame of frames) {
+  for (const frame of page.frames()) {
     const isMain = frame === page.mainFrame();
     try {
-      const items = await frame.evaluate(
+      const data = await frame.evaluate(
         ({ sel, isMainFrame }) => {
-          let root = document.body;
-          if (isMainFrame) {
-            const inputEl = document.querySelector(sel);
-            if (inputEl) {
-              // Walk up from #chatMessage to find the enclosing chat panel (narrower than full page)
-              let cur = inputEl.parentElement;
-              let best = cur;
-              while (cur && cur !== document.body) {
-                const r = cur.getBoundingClientRect();
-                if (r.width >= 260 && r.width <= 650 && r.height >= 260) {
-                  best = cur;
-                }
-                cur = cur.parentElement;
-              }
-              root = best || inputEl.parentElement || document.body;
-            }
-          }
-
-          const candidates = root.querySelectorAll(
-            'button, [role="button"], a, li, div, span'
-          );
-          const out = [];
-          const seen = new Set();
-
-          for (const el of candidates) {
+          const isVisible = (el) => {
+            if (!el || el.nodeType !== 1) return false;
             const style = window.getComputedStyle(el);
             if (
               style.display === 'none' ||
               style.visibility === 'hidden' ||
-              Number(style.opacity) === 0 ||
-              el.disabled
+              Number(style.opacity) === 0
             ) {
-              continue;
+              return false;
             }
+            const r = el.getBoundingClientRect();
+            return r.width > 1 && r.height > 1;
+          };
 
+          // Pierce open Shadow DOM recursively
+          const collectDeep = (root) => {
+            const list = [];
+            const stack = [root];
+            while (stack.length) {
+              const node = stack.pop();
+              if (!node) continue;
+              if (node.nodeType === 1) list.push(node);
+              if (node.shadowRoot) stack.push(node.shadowRoot);
+              const children = node.children || [];
+              for (let i = children.length - 1; i >= 0; i--) {
+                stack.push(children[i]);
+              }
+            }
+            return list;
+          };
+
+          const allInDoc = collectDeep(document.body);
+          const findInputEl = (els) => {
+            for (const el of els) {
+              const tag = el.tagName;
+              const matches =
+                tag === 'TEXTAREA' ||
+                (tag === 'INPUT' &&
+                  ['text', 'search', 'email', 'tel'].includes((el.type || 'text').toLowerCase())) ||
+                el.getAttribute('contenteditable') === 'true' ||
+                (sel && el.matches && (() => { try { return el.matches(sel); } catch (_) { return false; } })());
+
+              if (matches && isVisible(el)) {
+                // Skip main-page search bars if on mainFrame
+                if (isMainFrame) {
+                  const r = el.getBoundingClientRect();
+                  const ph = (el.placeholder || el.getAttribute('aria-label') || '').toLowerCase();
+                  if (ph.includes('search') && !ph.includes('message') && r.top < 200) continue;
+                }
+                return el;
+              }
+            }
+            return null;
+          };
+
+          let inputEl = findInputEl(allInDoc);
+          let root = null;
+
+          if (!isMainFrame) {
+            // Inside an iframe: if it has a chat input or dialog/log content, inspect whole iframe body
+            const frameRect = document.body.getBoundingClientRect();
+            if (inputEl || (frameRect.width >= 240 && frameRect.height >= 240)) {
+              root = document.body;
+            }
+          } else if (inputEl) {
+            // Walk up from the chat input (supporting ShadowRoot hosts) to find the enclosing chat drawer/panel
+            let cur = inputEl;
+            let bestPanel = inputEl.parentElement;
+            while (cur && cur !== document.body) {
+              const parent =
+                cur.parentElement || (cur.getRootNode && cur.getRootNode().host) || null;
+              if (!parent || parent === document.body) break;
+              const r = parent.getBoundingClientRect();
+              if (r.width >= 260 && r.width <= 680 && r.height >= 250) {
+                bestPanel = parent;
+              }
+              cur = parent;
+            }
+            root = bestPanel;
+          } else {
+            // Fallback on main frame: look for a fixed bottom-right chat panel even if input hasn't mounted yet
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            for (const el of allInDoc) {
+              if (!isVisible(el)) continue;
+              const style = window.getComputedStyle(el);
+              if (style.position !== 'fixed') continue;
+              const r = el.getBoundingClientRect();
+              if (
+                r.width >= 280 &&
+                r.width <= 650 &&
+                r.height >= 320 &&
+                r.right >= vw - 60 &&
+                r.bottom >= vh - 80
+              ) {
+                root = el;
+                break;
+              }
+            }
+          }
+
+          if (!root) return { found: false };
+
+          const panelEls = collectDeep(root);
+
+          // Auto-scroll inner chat feed to bottom so screenshots & visibility stay fresh
+          for (const el of panelEls) {
+            if (el.scrollHeight > el.clientHeight + 24) {
+              const ov = window.getComputedStyle(el).overflowY;
+              if (ov === 'auto' || ov === 'scroll') {
+                el.scrollTop = el.scrollHeight;
+              }
+            }
+          }
+
+          if (!inputEl) inputEl = findInputEl(panelEls);
+          let inputEnabled = false;
+          let inputCoords = null;
+          if (inputEl) {
+            const r = inputEl.getBoundingClientRect();
+            inputCoords = {
+              cx: Math.round(r.left + r.width / 2),
+              cy: Math.round(r.top + r.height / 2)
+            };
+            inputEnabled =
+              !inputEl.disabled &&
+              !inputEl.readOnly &&
+              !inputEl.classList.contains('disabled') &&
+              inputEl.getAttribute('aria-disabled') !== 'true';
+          }
+
+          // Detect typing indicators or loading spinners inside chat panel
+          let isTyping = false;
+          for (const el of panelEls) {
+            if (!isVisible(el)) continue;
+            const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+            const role = (el.getAttribute('role') || '').toLowerCase();
+            if (
+              /(typing|spinner|loader|loading-dots|dot-flashing|thinking|is-typing)/.test(cls) ||
+              /(typing|loading|connecting)/.test(aria) ||
+              role === 'progressbar'
+            ) {
+              isTyping = true;
+              break;
+            }
+          }
+
+          // Extract clickable option buttons inside chat panel
+          const buttons = [];
+          const seenBtn = new Set();
+          const buttonEls = new Set();
+
+          for (const el of panelEls) {
+            if (!isVisible(el) || el.disabled) continue;
+            const style = window.getComputedStyle(el);
             const tag = el.tagName;
             const isExplicit =
               tag === 'BUTTON' ||
@@ -247,60 +349,171 @@ async function getChatOptionButtons(page, inputSelector) {
             const isPointer = style.cursor === 'pointer';
 
             if (!isExplicit && !isPointer) continue;
-
-            // Avoid selecting container wrappers that hold nested clickable elements
             if (!isExplicit && el.querySelector('button, a, [role="button"], input, textarea')) {
               continue;
             }
 
-            const rect = el.getBoundingClientRect();
-            if (rect.width < 24 || rect.width > 460 || rect.height < 18 || rect.height > 96) {
-              continue;
-            }
+            const r = el.getBoundingClientRect();
+            if (r.width < 24 || r.width > 480 || r.height < 18 || r.height > 96) continue;
 
             const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
             if (!text || text.length < 2 || text.length > 90) continue;
-            if (seen.has(text)) continue;
-            seen.add(text);
 
-            out.push({
-              text,
-              cx: Math.round(rect.left + rect.width / 2),
-              cy: Math.round(rect.top + rect.height / 2)
-            });
+            buttonEls.add(el);
+            if (!seenBtn.has(text)) {
+              seenBtn.add(text);
+              buttons.push({
+                text,
+                cx: Math.round(r.left + r.width / 2),
+                cy: Math.round(r.top + r.height / 2)
+              });
+            }
           }
-          return out;
+
+          const isInsideInteractive = (el) => {
+            let cur = el;
+            while (cur && cur !== root) {
+              if (
+                buttonEls.has(cur) ||
+                ['BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT', 'HEADER', 'FOOTER', 'NAV', 'SCRIPT', 'STYLE'].includes(cur.tagName) ||
+                cur.getAttribute?.('role') === 'button'
+              ) {
+                return true;
+              }
+              cur = cur.parentElement;
+            }
+            return false;
+          };
+
+          // Extract atomic/leaf message blocks (prevents parent wrappers from concatenating prompt + buttons)
+          const rawMessages = [];
+          const rootRect = root.getBoundingClientRect();
+
+          for (const el of panelEls) {
+            if (!isVisible(el)) continue;
+            if (isInsideInteractive(el)) continue;
+
+            // Skip header bar (top ~48px) and footer input bar (bottom ~56px)
+            const r = el.getBoundingClientRect();
+            if (r.bottom <= rootRect.top + 46) continue;
+            if (r.top >= rootRect.bottom - 52) continue;
+
+            // Only pick elements that do NOT wrap another visible block/button child with text
+            let hasNestedTextBlock = false;
+            for (const child of el.children || []) {
+              if (!isVisible(child)) continue;
+              const cTag = child.tagName;
+              const cText = (child.innerText || '').trim();
+              if (
+                cText.length > 0 &&
+                ['DIV', 'P', 'LI', 'UL', 'OL', 'SECTION', 'ARTICLE', 'BUTTON', 'A', 'FORM'].includes(cTag)
+              ) {
+                hasNestedTextBlock = true;
+                break;
+              }
+            }
+            if (hasNestedTextBlock) continue;
+
+            // Exclude any text that includes button text by cloning or reading direct text
+            const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (text.length < 3 || text.length > 800) continue;
+
+            // Estimate alignment (right-aligned bubbles inside panel are usually user/outgoing)
+            const relLeft = r.left - rootRect.left;
+            const relRight = rootRect.right - r.right;
+            const looksOutgoing = relLeft > rootRect.width * 0.32 && relRight < 55;
+
+            rawMessages.push({ text, looksOutgoing });
+          }
+
+          // Deduplicate adjacent/contained texts
+          const messages = [];
+          const seenMsg = new Set();
+          for (const item of rawMessages) {
+            if (seenMsg.has(item.text)) continue;
+            seenMsg.add(item.text);
+            messages.push(item);
+          }
+
+          return {
+            found: true,
+            inputFound: Boolean(inputEl),
+            inputEnabled,
+            inputCoords,
+            isTyping,
+            buttons,
+            messages
+          };
         },
         { sel: inputSelector, isMainFrame: isMain }
       );
 
-      for (const item of items) {
-        if (IGNORED_BUTTON_REGEX.test(item.text)) continue;
-        results.push({ ...item, frame });
+      if (!data || !data.found) continue;
+
+      const filteredButtons = (data.buttons || []).filter(
+        (b) => !IGNORED_BUTTON_REGEX.test(b.text)
+      );
+      const buttonTextSet = new Set(filteredButtons.map((b) => b.text.toLowerCase()));
+
+      const filteredMessages = (data.messages || [])
+        .filter((m) => {
+          if (IGNORED_MESSAGE_REGEX.test(m.text)) return false;
+          if (buttonTextSet.has(m.text.toLowerCase())) return false;
+          return true;
+        })
+        .map((m) => m);
+
+      const score =
+        (data.inputFound ? 10 : 0) +
+        (data.inputEnabled ? 5 : 0) +
+        filteredButtons.length * 3 +
+        filteredMessages.length * 2 +
+        (isMain ? 0 : 4);
+
+      if (score > best.score) {
+        best = {
+          found: true,
+          frame,
+          inputFound: data.inputFound,
+          inputEnabled: data.inputEnabled,
+          inputCoords: data.inputCoords,
+          isTyping: data.isTyping,
+          buttons: filteredButtons,
+          messages: filteredMessages,
+          score
+        };
       }
     } catch (_) {}
   }
 
-  return results;
+  return best;
 }
 
-async function tryClickChatOption(page, replyText, inputSelector) {
+async function clickCoordsInFrame(page, frame, cx, cy) {
+  const frameEl = await frame.frameElement().catch(() => null);
+  if (frameEl) {
+    const box = await frameEl.boundingBox();
+    if (box) {
+      await page.mouse.click(box.x + cx, box.y + cy);
+      return true;
+    }
+  }
+  await page.mouse.click(cx, cy);
+  return true;
+}
+
+async function clickOptionButton(page, state, replyText) {
   const cleanReply = String(replyText || '')
     .replace(/^["'`[\]()]+|["'`[\]()]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!cleanReply) return null;
-
-  const options = await getChatOptionButtons(page, inputSelector);
-  if (!options.length) return null;
+  if (!cleanReply || !state.buttons.length) return null;
 
   const targetLower = cleanReply.toLowerCase();
 
-  // 1. Exact case-insensitive match
-  let match = options.find((o) => o.text.toLowerCase() === targetLower);
-  // 2. Substring match (handles Vapi adding/dropping minor words or punctuation)
+  let match = state.buttons.find((o) => o.text.toLowerCase() === targetLower);
   if (!match) {
-    match = options.find(
+    match = state.buttons.find(
       (o) =>
         o.text.toLowerCase().includes(targetLower) ||
         targetLower.includes(o.text.toLowerCase())
@@ -309,39 +522,52 @@ async function tryClickChatOption(page, replyText, inputSelector) {
   if (!match) return null;
 
   try {
-    const loc = match.frame.getByText(match.text, { exact: true }).first();
+    const loc = state.frame.getByText(match.text, { exact: true }).first();
     if (await loc.isVisible({ timeout: 1000 })) {
       await loc.click({ timeout: 4000 });
       return match.text;
     }
   } catch (_) {}
 
-  // Coordinate click inside the frame as fallback
   try {
-    const frameEl = await match.frame.frameElement().catch(() => null);
-    if (frameEl) {
-      const box = await frameEl.boundingBox();
-      if (box) {
-        await page.mouse.click(box.x + match.cx, box.y + match.cy);
-        return match.text;
-      }
-    } else {
-      await page.mouse.click(match.cx, match.cy);
-      return match.text;
-    }
+    await clickCoordsInFrame(page, state.frame, match.cx, match.cy);
+    return match.text;
   } catch (_) {}
 
   return null;
 }
 
-async function isChatInputEnabled(page, inputSelector) {
-  const found = await findInputWithFrame(page, inputSelector);
-  if (!found) return false;
+async function typeMessageInState(page, state, inputSelector, sendSelector, text) {
+  if (!state.frame || !state.inputEnabled) return false;
+
+  // 1. Try Playwright locator inside detected chat frame
   try {
-    return await found.locator.isEnabled({ timeout: 500 });
-  } catch (_) {
-    return false;
+    const loc = state.frame.locator(inputSelector).first();
+    if ((await loc.isVisible({ timeout: 800 })) && (await loc.isEnabled({ timeout: 500 }))) {
+      await loc.click({ timeout: 2000 }).catch(() => {});
+      await loc.fill(text, { timeout: 4000 });
+      await loc.press('Enter').catch(async () => {
+        const sendBtn = state.frame.locator(sendSelector).first();
+        if (await sendBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+          await sendBtn.click({ timeout: 2000 }).catch(() => {});
+        }
+      });
+      return true;
+    }
+  } catch (_) {}
+
+  // 2. Coordinate click + keyboard typing fallback (works cleanly with custom inputs & Shadow DOM)
+  if (state.inputCoords) {
+    try {
+      await clickCoordsInFrame(page, state.frame, state.inputCoords.cx, state.inputCoords.cy);
+      await page.waitForTimeout(200);
+      await page.keyboard.type(text, { delay: 15 });
+      await page.keyboard.press('Enter');
+      return true;
+    } catch (_) {}
   }
+
+  return false;
 }
 
 async function detectChatSystem(page) {
@@ -360,6 +586,10 @@ async function detectChatSystem(page) {
   }
 }
 
+function normalizeForCompare(str) {
+  return String(str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 async function runChatSession(
   chat,
   { onUpdate, onTranscript, onComplete, onRegisterController, shouldStop }
@@ -367,7 +597,7 @@ async function runChatSession(
   const s = chat.structuredOutputs;
   const brandCfg = BRANDS[s.brand] || BRANDS.Rogers;
   const endpoint = getBrowserEndpoint();
-  const aiMaxDurationMs = Number(process.env.MAX_CHAT_DURATION_SEC || 240) * 1000;
+  const aiMaxDurationMs = Number(process.env.MAX_CHAT_DURATION_SEC || 300) * 1000;
   const manualMaxDurationMs = Number(process.env.MAX_MANUAL_DURATION_SEC || 900) * 1000;
   const maxVapiTurns = Number(process.env.MAX_VAPI_TURNS || 15);
   const startedAt = Date.now();
@@ -393,12 +623,14 @@ async function runChatSession(
   let page;
   let screenshotTimer;
 
-  const seenMessages = new Set();
-  const sentByUs = new Set();
+  const seenNormalized = new Set();
+  const sentByUsNormalized = new Set();
   const pendingManualNotes = [];
-  let firstMessageSentAt = null;
-  let vapiStarted = false;
-  let lastButtonsKey = '';
+  let firstActionAt = null;
+  let lastActionAt = 0;
+  let waitingForBrandReply = false;
+  let agentConnected = false;
+  let botReplied = false;
   let actionLock = Promise.resolve();
 
   const enqueueAction = (fn) => {
@@ -416,55 +648,54 @@ async function runChatSession(
     } catch (_) {}
   };
 
-  const sendToCarrier = async (replyText, senderRole = 'assistant') => {
-    if (!page || !replyText) return false;
+  const executeReply = async (replyText, senderRole = 'assistant') => {
+    if (!page || !replyText) return { ok: false, reason: 'empty' };
     return enqueueAction(async () => {
-      // 1. Always try matching an on-screen chat option button first
-      const clickedLabel = await tryClickChatOption(page, replyText, brandCfg.selectors.input);
+      const state = await inspectChatState(page, brandCfg.selectors.input);
+
+      // 1. Try matching an on-screen button first
+      const clickedLabel = await clickOptionButton(page, state, replyText);
       if (clickedLabel) {
-        sentByUs.add(clickedLabel);
-        sentByUs.add(replyText);
+        sentByUsNormalized.add(normalizeForCompare(clickedLabel));
+        sentByUsNormalized.add(normalizeForCompare(replyText));
         pathSteps.push(`${senderRole === 'operator' ? 'Manual' : 'AI'} clicked "${clickedLabel}"`);
         pushTranscript(senderRole, `[Clicked] ${clickedLabel}`);
-        if (!firstMessageSentAt) firstMessageSentAt = Date.now();
+        if (!firstActionAt) firstActionAt = Date.now();
+        lastActionAt = Date.now();
+        waitingForBrandReply = true;
         if (senderRole === 'operator') pendingManualNotes.push(`Clicked "${clickedLabel}"`);
-        await page.waitForTimeout(1500);
+        await page.waitForTimeout(1200);
         await captureFrame();
-        return true;
+        return { ok: true, mode: 'button', label: clickedLabel };
       }
 
-      // 2. Otherwise type into the chat input ONLY if it is enabled (never crash on disabled textarea)
-      const found = await findInputWithFrame(page, brandCfg.selectors.input);
-      const enabled = found ? await found.locator.isEnabled({ timeout: 500 }).catch(() => false) : false;
-
-      if (!found || !enabled) {
-        const opts = (await getChatOptionButtons(page, brandCfg.selectors.input)).map((o) => o.text);
-        pushTranscript(
-          'system',
-          `Text box is currently disabled — must click an on-screen option first.${
-            opts.length ? ` Available: ${opts.join(' | ')}` : ''
-          }`
-        );
-        return false;
+      // 2. Otherwise type only if input is enabled
+      if (!state.inputEnabled) {
+        return {
+          ok: false,
+          reason: 'input_disabled',
+          buttons: state.buttons.map((b) => b.text)
+        };
       }
 
-      try {
-        await found.locator.fill(replyText, { timeout: 5000 });
-        await found.locator.press('Enter').catch(async () => {
-          const sendBtn = await findInFrames(page, brandCfg.selectors.send);
-          if (sendBtn) await sendBtn.click({ timeout: 3000 }).catch(() => {});
-        });
-        sentByUs.add(replyText);
-        pushTranscript(senderRole, replyText);
-        if (!firstMessageSentAt) firstMessageSentAt = Date.now();
-        if (senderRole === 'operator') pendingManualNotes.push(replyText);
-        await page.waitForTimeout(1000);
-        await captureFrame();
-        return true;
-      } catch (fillErr) {
-        pushTranscript('system', `Could not type message (${fillErr.message.split('\n')[0]})`);
-        return false;
-      }
+      const typed = await typeMessageInState(
+        page,
+        state,
+        brandCfg.selectors.input,
+        brandCfg.selectors.send,
+        replyText
+      );
+      if (!typed) return { ok: false, reason: 'type_failed' };
+
+      sentByUsNormalized.add(normalizeForCompare(replyText));
+      pushTranscript(senderRole, replyText);
+      if (!firstActionAt) firstActionAt = Date.now();
+      lastActionAt = Date.now();
+      waitingForBrandReply = true;
+      if (senderRole === 'operator') pendingManualNotes.push(replyText);
+      await page.waitForTimeout(1000);
+      await captureFrame();
+      return { ok: true, mode: 'typed' };
     });
   };
 
@@ -482,7 +713,16 @@ async function runChatSession(
     sendManualMessage: async (text) => {
       const clean = String(text || '').trim();
       if (!clean) return false;
-      return sendToCarrier(clean, 'operator');
+      const res = await executeReply(clean, 'operator');
+      if (!res.ok && res.reason === 'input_disabled') {
+        pushTranscript(
+          'system',
+          `Input is disabled — click an option or type its exact label.${
+            res.buttons?.length ? ` Available: ${res.buttons.join(' | ')}` : ''
+          }`
+        );
+      }
+      return res.ok;
     },
     clickAtRatio: async (xRatio, yRatio) => {
       if (!page) return false;
@@ -491,6 +731,8 @@ async function runChatSession(
         const x = Math.max(1, Math.min(vp.width - 1, Math.round(xRatio * vp.width)));
         const y = Math.max(1, Math.min(vp.height - 1, Math.round(yRatio * vp.height)));
         await page.mouse.click(x, y);
+        lastActionAt = Date.now();
+        waitingForBrandReply = true;
         pushTranscript('system', `Manual click at (${x}, ${y})`);
         await page.waitForTimeout(1200);
         await captureFrame();
@@ -549,51 +791,53 @@ async function runChatSession(
         .catch(() => launcher.click({ force: true }).catch(() => {}));
       pathSteps.push('Clicked chat launcher');
       pushTranscript('system', 'Clicked chat widget launcher');
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(3500);
       await captureFrame();
     } else if (await clickBottomRightLauncher(page)) {
       pathSteps.push('Clicked bottom-right floating launcher');
       pushTranscript('system', 'Clicked bottom-right floating chat launcher');
-      await page.waitForTimeout(4000);
+      await page.waitForTimeout(3500);
       await captureFrame();
     } else {
       pathSteps.push('Launcher not detected');
       pushTranscript(
         'system',
-        'No launcher detected — you can click directly on the live screenshot to open chat.'
+        'No launcher detected — click directly on the live screenshot to open chat.'
       );
     }
 
     s.systemUsed = await detectChatSystem(page);
     onUpdate();
 
+    // Dynamic settle & conversation loop
     let turns = 0;
-    let botReplied = false;
-    let agentConnected = false;
+    let vapiStarted = false;
+    let lastButtonsKey = '';
+    let prevInputEnabled = false;
+    let prevFingerprint = '';
+    let stableChecks = 0;
+    let pendingFreshMessages = [];
+    let pendingStateTrigger = false;
 
-    const initialInput = await waitForInFrames(page, brandCfg.selectors.input, 8000);
-    if (!initialInput) {
-      pushTranscript(
-        'system',
-        'Chat widget not detected yet — click the screenshot or Take Over to navigate manually.'
-      );
-    }
-
-    const buildVapiPrompt = ({ header, msgs, btns, inputEnabled, manualNote }) => {
+    const buildVapiPrompt = ({ header, msgs, btns, inputEnabled, manualNote, strictButtonsOnly }) => {
       const lines = [];
       if (header) lines.push(header);
       if (manualNote) lines.push(manualNote);
-      if (msgs.length) lines.push(`Carrier said: ${msgs.join(' | ')}`);
+      if (msgs.length) lines.push(`Carrier assistant said: ${msgs.join(' | ')}`);
       if (btns.length) {
-        lines.push(`On-screen buttons: ${btns.map((b) => `"${b}"`).join(', ')}`);
+        lines.push(`Available on-screen buttons: ${btns.map((b) => `"${b}"`).join(', ')}`);
       }
-      if (!inputEnabled && btns.length) {
+      if (strictButtonsOnly || (!inputEnabled && btns.length)) {
         lines.push(
-          'IMPORTANT: The text input is DISABLED until you click one of the on-screen buttons above. Reply with ONLY the exact text of the single button you want to click (do not write a sentence).'
+          'CRITICAL: The chat text input is DISABLED. You MUST reply with ONLY the exact label of one button from the list above (no extra words, no quotes).'
         );
-      } else if (btns.length) {
+      } else if (inputEnabled && btns.length) {
         lines.push(
-          'Reply with either the exact text of one of the buttons above OR a short message to type.'
+          'The text input is enabled and buttons are shown. Reply with either the exact button label to click OR a short message to type.'
+        );
+      } else if (inputEnabled) {
+        lines.push(
+          'The text input is now enabled with no buttons. Reply with a short message to type into the chat box.'
         );
       }
       return lines.join('\n');
@@ -610,45 +854,46 @@ async function runChatSession(
         onUpdate();
       }
 
-      const currentMessages = await scrapeMessages(
-        page,
-        brandCfg.selectors.messages,
-        brandCfg.selectors.input
-      );
-      const currentButtons = (await getChatOptionButtons(page, brandCfg.selectors.input)).map(
-        (o) => o.text
-      );
-      const inputEnabled = await isChatInputEnabled(page, brandCfg.selectors.input);
-      const buttonsKey = currentButtons.join('||');
+      const state = await inspectChatState(page, brandCfg.selectors.input);
+      const buttonLabels = state.buttons.map((b) => b.text);
+      const buttonsKey = buttonLabels.join('||');
 
-      const freshBatch = [];
-      for (const msg of currentMessages) {
-        if (seenMessages.has(msg) || sentByUs.has(msg)) continue;
-        // Skip duplicating pure button text as a chat bubble if it matches a current button
-        if (currentButtons.includes(msg)) {
-          seenMessages.add(msg);
-          continue;
+      // Capture brand-new messages (ignoring our own sent text & mutated subsets)
+      for (const m of state.messages) {
+        const norm = normalizeForCompare(m.text);
+        if (!norm || seenNormalized.has(norm) || sentByUsNormalized.has(norm)) continue;
+
+        // Ignore mutated parent strings that just concatenate an already-seen prompt + our clicked button
+        let isMutationOfSeen = false;
+        for (const prev of seenNormalized) {
+          if (norm.startsWith(prev) && norm.length < prev.length + 50) {
+            isMutationOfSeen = true;
+            break;
+          }
         }
-        seenMessages.add(msg);
-        freshBatch.push(msg);
+        seenNormalized.add(norm);
+        if (isMutationOfSeen || m.looksOutgoing) continue;
 
-        if (!botReplied && firstMessageSentAt) {
+        pendingFreshMessages.push(m.text);
+        waitingForBrandReply = false;
+
+        if (!botReplied && firstActionAt) {
           botReplied = true;
-          const botSec = Math.round((Date.now() - firstMessageSentAt) / 1000);
+          const botSec = Math.round((Date.now() - firstActionAt) / 1000);
           s.botResponseSec = botSec;
           if (!s.waitTimes || s.waitTimes === '—') s.waitTimes = `Bot: ${botSec}s`;
         }
 
-        const waitMatch = msg.match(WAIT_TIME_REGEX);
+        const waitMatch = m.text.match(WAIT_TIME_REGEX);
         if (waitMatch) s.waitTimes = waitMatch[1];
 
-        const hoopsMatch = msg.match(HOOPS_REGEX);
+        const hoopsMatch = m.text.match(HOOPS_REGEX);
         if (hoopsMatch && !s.hoops) s.hoops = hoopsMatch[1];
 
-        pushTranscript('user', msg);
+        pushTranscript('user', m.text);
 
-        if (!agentConnected && AGENT_JOIN_REGEX.test(msg)) {
-          const ttaSec = Math.round((Date.now() - (firstMessageSentAt || startedAt)) / 1000);
+        if (!agentConnected && AGENT_JOIN_REGEX.test(m.text)) {
+          const ttaSec = Math.round((Date.now() - (firstActionAt || startedAt)) / 1000);
           s.timeToAgent = `${ttaSec}s`;
           agentConnected = true;
           pathSteps.push(`Live agent joined in ${ttaSec}s`);
@@ -657,22 +902,62 @@ async function runChatSession(
         }
       }
 
-      const buttonsChanged = Boolean(buttonsKey && buttonsKey !== lastButtonsKey);
-      if (buttonsChanged) {
+      // Detect newly appearing option buttons
+      if (buttonsKey && buttonsKey !== lastButtonsKey) {
         lastButtonsKey = buttonsKey;
-        pushTranscript('system', `Detected options: ${currentButtons.join(' | ')}`);
+        waitingForBrandReply = false;
+        pendingStateTrigger = true;
+        pushTranscript('system', `Detected options: ${buttonLabels.join(' | ')}`);
       }
+
+      // Detect chat input unlocking (disabled -> enabled)
+      if (state.inputEnabled && !prevInputEnabled) {
+        waitingForBrandReply = false;
+        pendingStateTrigger = true;
+        pushTranscript('system', 'Chat text input is now enabled.');
+      }
+      prevInputEnabled = state.inputEnabled;
 
       if (agentConnected && !chat.aiPaused) break;
 
-      const chatIsReady = inputEnabled || currentButtons.length > 0;
-      const shouldAskVapi =
-        vapi &&
-        !chat.aiPaused &&
-        chatIsReady &&
-        (!vapiStarted || freshBatch.length > 0 || buttonsChanged);
+      // Track DOM stability so we wait for the brand's assistant to finish sending multi-bubble replies + buttons
+      const fingerprint = `${state.messages.map((m) => m.text).join('|')}##${buttonsKey}##${state.inputEnabled}`;
+      if (state.isTyping || fingerprint !== prevFingerprint) {
+        prevFingerprint = fingerprint;
+        stableChecks = 0;
+        await page.waitForTimeout(1500);
+        continue;
+      }
+      stableChecks++;
 
-      if (shouldAskVapi) {
+      // Wait until brand response settles (2 consecutive stable polls = ~3s of quiet)
+      if (stableChecks < 2) {
+        await page.waitForTimeout(1500);
+        continue;
+      }
+
+      // If we just clicked/sent something and are waiting for the brand assistant to reply,
+      // allow up to 20s for a reply before nudging (only if input is enabled or new buttons exist)
+      const msSinceAction = Date.now() - lastActionAt;
+      if (waitingForBrandReply && msSinceAction < 20000) {
+        await page.waitForTimeout(1500);
+        continue;
+      }
+      if (waitingForBrandReply && msSinceAction >= 20000) {
+        waitingForBrandReply = false;
+        if (state.inputEnabled || buttonLabels.length > 0) {
+          pendingStateTrigger = true;
+        }
+      }
+
+      const canAct = state.inputEnabled || buttonLabels.length > 0;
+      const hasWorkForVapi =
+        !vapiStarted || pendingFreshMessages.length > 0 || pendingStateTrigger;
+
+      if (vapi && !chat.aiPaused && canAct && hasWorkForVapi) {
+        const msgsToSend = pendingFreshMessages.splice(0);
+        pendingStateTrigger = false;
+
         const manualNote = pendingManualNotes.length
           ? `Note: Human operator manually did earlier: ${pendingManualNotes.splice(0).join(' | ')}`
           : '';
@@ -681,14 +966,15 @@ async function runChatSession(
           header: !vapiStarted
             ? `Chat opened on ${s.brand} (${s.segment} - ${s.useCase} - ${s.language}).`
             : '',
-          msgs: freshBatch,
-          btns: currentButtons,
-          inputEnabled,
-          manualNote
+          msgs: msgsToSend,
+          btns: buttonLabels,
+          inputEnabled: state.inputEnabled,
+          manualNote,
+          strictButtonsOnly: false
         });
 
         vapiStarted = true;
-        const vapiReply = await askVapiChat(vapi.sessionId, prompt);
+        let vapiReply = await askVapiChat(vapi.sessionId, prompt);
 
         if (!chat.aiPaused && vapiReply) {
           if (/\[END_CHAT\]/i.test(vapiReply)) {
@@ -696,12 +982,33 @@ async function runChatSession(
             pushTranscript('system', 'Vapi assistant signaled end of chat.');
             break;
           }
-          const ok = await sendToCarrier(vapiReply, 'assistant');
-          if (ok) turns++;
+
+          let execRes = await executeReply(vapiReply, 'assistant');
+
+          // Auto-recover if Vapi wrote a sentence while input was still disabled
+          if (!execRes.ok && execRes.reason === 'input_disabled' && execRes.buttons?.length) {
+            const retryPrompt = buildVapiPrompt({
+              header: 'Your previous reply could not be typed because the text input is disabled.',
+              msgs: [],
+              btns: execRes.buttons,
+              inputEnabled: false,
+              strictButtonsOnly: true
+            });
+            vapiReply = await askVapiChat(vapi.sessionId, retryPrompt);
+            if (!chat.aiPaused && vapiReply) {
+              execRes = await executeReply(vapiReply, 'assistant');
+            }
+          }
+
+          if (execRes.ok) {
+            turns++;
+            stableChecks = 0;
+            prevFingerprint = '';
+          }
         }
       }
 
-      await page.waitForTimeout(2500);
+      await page.waitForTimeout(1500);
     }
 
     if (!agentConnected && !s.cxToAgent) {
