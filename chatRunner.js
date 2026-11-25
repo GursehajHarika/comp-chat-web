@@ -16,6 +16,15 @@ function getBrowserEndpoint() {
   if (token && !endpoint.includes('token=')) {
     endpoint += (endpoint.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
   }
+
+  // Forward optional Canadian proxy to Browserless launch args if configured
+  const proxyUrl = (process.env.PROXY_URL || '').trim();
+  if (proxyUrl && !endpoint.includes('--proxy-server=')) {
+    endpoint +=
+      (endpoint.includes('?') ? '&' : '?') +
+      `--proxy-server=${encodeURIComponent(proxyUrl)}`;
+  }
+
   return endpoint;
 }
 
@@ -94,10 +103,13 @@ const HOOPS_REGEX =
   /(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|h)\s*(?:to|-|–|à)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|h))/i;
 
 const IGNORED_BUTTON_REGEX =
-  /^(close|minimize|minimise|maximize|end chat|end|send|envoyer|fermer|réduire|feedback|help|need help\??|ask anna|menu|back|x|×|privacy|terms|accessibility|clear|reset|download transcript|save transcript)$/i;
+  /^(close|minimize|minimise|maximize|end chat|end|send|envoyer|fermer|réduire|feedback|help|need help\??|ask anna|menu|back|x|×|privacy|terms|accessibility|clear|reset|download transcript|save transcript|update browser|ignore)$/i;
 
 const IGNORED_MESSAGE_REGEX =
-  /^(\d{1,2}:\d{2}(\s?[ap]m)?|just now|today|yesterday|delivered|sent|read|typing\.{0,3}|loading\.{0,3}|ask anna|rogers|videotron|vidéotron|virtual assistant|assistant virtuel|type your message|send|envoyer|\d+\/\d+|powered by .+)$/i;
+  /^(\d{1,2}:\d{2}(\s?[ap]m)?|just now|today|yesterday|delivered|sent|read|typing\.{0,3}|loading\.{0,3}|ask anna|live chat|rogers|videotron|vidéotron|virtual assistant|assistant virtuel|type your message|send|envoyer|undefined|\d+\/\d+|powered by .+)$/i;
+
+const CHAT_API_URL_REGEX =
+  /(chat|va\.|genesys|mypurecloud|nuance|liveperson|lpsnmedia|touchcommerce|kore|cognigy|bot|conversation|agent|rogers\.com\/api|videotron\.com\/api)/i;
 
 async function findInFrames(page, selector) {
   for (const frame of page.frames()) {
@@ -164,8 +176,6 @@ async function clickBottomRightLauncher(page) {
   return true;
 }
 
-// Dynamically inspects the active chat panel (across frames + open Shadow DOM)
-// Returns: { found, frame, inputEnabled, inputCoords, isTyping, buttons, messages }
 async function inspectChatState(page, inputSelector) {
   let best = {
     found: false,
@@ -194,11 +204,18 @@ async function inspectChatState(page, inputSelector) {
             ) {
               return false;
             }
+            // Exclude screen-reader-only / visually-hidden accessibility containers
+            const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
+            if (/(sr-only|visually-hidden|cdk-visually-hidden|screen-reader)/.test(cls)) {
+              return false;
+            }
+            if (style.clip === 'rect(0px, 0px, 0px, 0px)' || style.clipPath === 'inset(50%)') {
+              return false;
+            }
             const r = el.getBoundingClientRect();
-            return r.width > 1 && r.height > 1;
+            return r.width > 4 && r.height > 4;
           };
 
-          // Pierce open Shadow DOM recursively
           const collectDeep = (root) => {
             const list = [];
             const stack = [root];
@@ -224,10 +241,17 @@ async function inspectChatState(page, inputSelector) {
                 (tag === 'INPUT' &&
                   ['text', 'search', 'email', 'tel'].includes((el.type || 'text').toLowerCase())) ||
                 el.getAttribute('contenteditable') === 'true' ||
-                (sel && el.matches && (() => { try { return el.matches(sel); } catch (_) { return false; } })());
+                (sel &&
+                  el.matches &&
+                  (() => {
+                    try {
+                      return el.matches(sel);
+                    } catch (_) {
+                      return false;
+                    }
+                  })());
 
               if (matches && isVisible(el)) {
-                // Skip main-page search bars if on mainFrame
                 if (isMainFrame) {
                   const r = el.getBoundingClientRect();
                   const ph = (el.placeholder || el.getAttribute('aria-label') || '').toLowerCase();
@@ -243,13 +267,11 @@ async function inspectChatState(page, inputSelector) {
           let root = null;
 
           if (!isMainFrame) {
-            // Inside an iframe: if it has a chat input or dialog/log content, inspect whole iframe body
             const frameRect = document.body.getBoundingClientRect();
             if (inputEl || (frameRect.width >= 240 && frameRect.height >= 240)) {
               root = document.body;
             }
           } else if (inputEl) {
-            // Walk up from the chat input (supporting ShadowRoot hosts) to find the enclosing chat drawer/panel
             let cur = inputEl;
             let bestPanel = inputEl.parentElement;
             while (cur && cur !== document.body) {
@@ -264,7 +286,6 @@ async function inspectChatState(page, inputSelector) {
             }
             root = bestPanel;
           } else {
-            // Fallback on main frame: look for a fixed bottom-right chat panel even if input hasn't mounted yet
             const vw = window.innerWidth;
             const vh = window.innerHeight;
             for (const el of allInDoc) {
@@ -289,7 +310,6 @@ async function inspectChatState(page, inputSelector) {
 
           const panelEls = collectDeep(root);
 
-          // Auto-scroll inner chat feed to bottom so screenshots & visibility stay fresh
           for (const el of panelEls) {
             if (el.scrollHeight > el.clientHeight + 24) {
               const ov = window.getComputedStyle(el).overflowY;
@@ -315,7 +335,6 @@ async function inspectChatState(page, inputSelector) {
               inputEl.getAttribute('aria-disabled') !== 'true';
           }
 
-          // Detect typing indicators or loading spinners inside chat panel
           let isTyping = false;
           for (const el of panelEls) {
             if (!isVisible(el)) continue;
@@ -332,7 +351,6 @@ async function inspectChatState(page, inputSelector) {
             }
           }
 
-          // Extract clickable option buttons inside chat panel
           const buttons = [];
           const seenBtn = new Set();
           const buttonEls = new Set();
@@ -370,13 +388,14 @@ async function inspectChatState(page, inputSelector) {
             }
           }
 
-          const isInsideInteractive = (el) => {
+          const isExcludedAncestor = (el) => {
             let cur = el;
             while (cur && cur !== root) {
               if (
                 buttonEls.has(cur) ||
                 ['BUTTON', 'A', 'INPUT', 'TEXTAREA', 'SELECT', 'HEADER', 'FOOTER', 'NAV', 'SCRIPT', 'STYLE'].includes(cur.tagName) ||
-                cur.getAttribute?.('role') === 'button'
+                cur.getAttribute?.('role') === 'button' ||
+                cur.getAttribute?.('aria-live')
               ) {
                 return true;
               }
@@ -385,40 +404,45 @@ async function inspectChatState(page, inputSelector) {
             return false;
           };
 
-          // Extract atomic/leaf message blocks (prevents parent wrappers from concatenating prompt + buttons)
           const rawMessages = [];
           const rootRect = root.getBoundingClientRect();
 
           for (const el of panelEls) {
             if (!isVisible(el)) continue;
-            if (isInsideInteractive(el)) continue;
+            if (isExcludedAncestor(el)) continue;
 
-            // Skip header bar (top ~48px) and footer input bar (bottom ~56px)
             const r = el.getBoundingClientRect();
             if (r.bottom <= rootRect.top + 46) continue;
             if (r.top >= rootRect.bottom - 52) continue;
 
-            // Only pick elements that do NOT wrap another visible block/button child with text
-            let hasNestedTextBlock = false;
+            // Skip containers that hold nested block/interactive elements or multiple paragraphs
+            let hasNestedBlock = false;
             for (const child of el.children || []) {
               if (!isVisible(child)) continue;
               const cTag = child.tagName;
               const cText = (child.innerText || '').trim();
               if (
                 cText.length > 0 &&
+                ['DIV', 'P', 'LI', 'UL', 'OL', 'SECTION', 'ARTICLE', 'BUTTON', 'A', 'FORM', 'SPAN'].includes(cTag) &&
+                el.children.length > 1
+              ) {
+                hasNestedBlock = true;
+                break;
+              }
+              if (
+                cText.length > 0 &&
                 ['DIV', 'P', 'LI', 'UL', 'OL', 'SECTION', 'ARTICLE', 'BUTTON', 'A', 'FORM'].includes(cTag)
               ) {
-                hasNestedTextBlock = true;
+                hasNestedBlock = true;
                 break;
               }
             }
-            if (hasNestedTextBlock) continue;
+            if (hasNestedBlock) continue;
 
-            // Exclude any text that includes button text by cloning or reading direct text
             const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
             if (text.length < 3 || text.length > 800) continue;
+            if (/^live chat\b/i.test(text)) continue;
 
-            // Estimate alignment (right-aligned bubbles inside panel are usually user/outgoing)
             const relLeft = r.left - rootRect.left;
             const relRight = rootRect.right - r.right;
             const looksOutgoing = relLeft > rootRect.width * 0.32 && relRight < 55;
@@ -426,7 +450,6 @@ async function inspectChatState(page, inputSelector) {
             rawMessages.push({ text, looksOutgoing });
           }
 
-          // Deduplicate adjacent/contained texts
           const messages = [];
           const seenMsg = new Set();
           for (const item of rawMessages) {
@@ -455,13 +478,11 @@ async function inspectChatState(page, inputSelector) {
       );
       const buttonTextSet = new Set(filteredButtons.map((b) => b.text.toLowerCase()));
 
-      const filteredMessages = (data.messages || [])
-        .filter((m) => {
-          if (IGNORED_MESSAGE_REGEX.test(m.text)) return false;
-          if (buttonTextSet.has(m.text.toLowerCase())) return false;
-          return true;
-        })
-        .map((m) => m);
+      const filteredMessages = (data.messages || []).filter((m) => {
+        if (IGNORED_MESSAGE_REGEX.test(m.text)) return false;
+        if (buttonTextSet.has(m.text.toLowerCase())) return false;
+        return true;
+      });
 
       const score =
         (data.inputFound ? 10 : 0) +
@@ -540,7 +561,6 @@ async function clickOptionButton(page, state, replyText) {
 async function typeMessageInState(page, state, inputSelector, sendSelector, text) {
   if (!state.frame || !state.inputEnabled) return false;
 
-  // 1. Try Playwright locator inside detected chat frame
   try {
     const loc = state.frame.locator(inputSelector).first();
     if ((await loc.isVisible({ timeout: 800 })) && (await loc.isEnabled({ timeout: 500 }))) {
@@ -556,7 +576,6 @@ async function typeMessageInState(page, state, inputSelector, sendSelector, text
     }
   } catch (_) {}
 
-  // 2. Coordinate click + keyboard typing fallback (works cleanly with custom inputs & Shadow DOM)
   if (state.inputCoords) {
     try {
       await clickCoordsInFrame(page, state.frame, state.inputCoords.cx, state.inputCoords.cy);
@@ -625,6 +644,7 @@ async function runChatSession(
 
   const seenNormalized = new Set();
   const sentByUsNormalized = new Set();
+  const loggedNetErrors = new Set();
   const pendingManualNotes = [];
   let firstActionAt = null;
   let lastActionAt = 0;
@@ -653,7 +673,6 @@ async function runChatSession(
     return enqueueAction(async () => {
       const state = await inspectChatState(page, brandCfg.selectors.input);
 
-      // 1. Try matching an on-screen button first
       const clickedLabel = await clickOptionButton(page, state, replyText);
       if (clickedLabel) {
         sentByUsNormalized.add(normalizeForCompare(clickedLabel));
@@ -669,7 +688,6 @@ async function runChatSession(
         return { ok: true, mode: 'button', label: clickedLabel };
       }
 
-      // 2. Otherwise type only if input is enabled
       if (!state.inputEnabled) {
         return {
           ok: false,
@@ -762,13 +780,46 @@ async function runChatSession(
     }
 
     browser = await chromium.connectOverCDP(endpoint, { timeout: 25000 });
-    context = await browser.newContext({
+
+    // Match the real Chromium version installed in Browserless (avoids Chrome 128 warning & Akamai UA mismatch)
+    const rawVer = browser.version() || '140.0.0.0';
+    const chromeVer = rawVer.replace(/^[^0-9]*/, '') || '140.0.0.0';
+    const contextOptions = {
       viewport: { width: 1280, height: 800 },
       locale: /^fr/i.test(s.language) ? 'fr-CA' : 'en-CA',
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+      timezoneId: 'America/Toronto',
+      userAgent: `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
+    };
+
+    if (process.env.PROXY_URL) {
+      contextOptions.proxy = { server: process.env.PROXY_URL };
+      if (process.env.PROXY_USERNAME) contextOptions.proxy.username = process.env.PROXY_USERNAME;
+      if (process.env.PROXY_PASSWORD) contextOptions.proxy.password = process.env.PROXY_PASSWORD;
+    }
+
+    context = await browser.newContext(contextOptions);
+
+    // Mask automation flag so WAFs don't reject chat API calls
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-CA', 'en-US', 'en'] });
     });
+
     page = await context.newPage();
+
+    // Surface failed chat API responses (e.g. 403 WAF or geo-block) directly in Live Feed
+    page.on('response', (res) => {
+      const status = res.status();
+      const url = res.url();
+      if (status >= 400 && CHAT_API_URL_REGEX.test(url)) {
+        const shortUrl = url.split('?')[0].slice(0, 110);
+        const key = `${status}:${shortUrl}`;
+        if (!loggedNetErrors.has(key)) {
+          loggedNetErrors.add(key);
+          pushTranscript('system', `Chat API HTTP ${status} on ${shortUrl}`);
+        }
+      }
+    });
 
     const targetUrl =
       chat.targetUrl || resolveBrandUrl(s.brand, s.segment, s.useCase, s.language);
@@ -809,7 +860,6 @@ async function runChatSession(
     s.systemUsed = await detectChatSystem(page);
     onUpdate();
 
-    // Dynamic settle & conversation loop
     let turns = 0;
     let vapiStarted = false;
     let lastButtonsKey = '';
@@ -858,15 +908,13 @@ async function runChatSession(
       const buttonLabels = state.buttons.map((b) => b.text);
       const buttonsKey = buttonLabels.join('||');
 
-      // Capture brand-new messages (ignoring our own sent text & mutated subsets)
       for (const m of state.messages) {
         const norm = normalizeForCompare(m.text);
         if (!norm || seenNormalized.has(norm) || sentByUsNormalized.has(norm)) continue;
 
-        // Ignore mutated parent strings that just concatenate an already-seen prompt + our clicked button
         let isMutationOfSeen = false;
         for (const prev of seenNormalized) {
-          if (norm.startsWith(prev) && norm.length < prev.length + 50) {
+          if (norm.includes(prev) && norm.length < prev.length + 65) {
             isMutationOfSeen = true;
             break;
           }
@@ -902,7 +950,6 @@ async function runChatSession(
         }
       }
 
-      // Detect newly appearing option buttons
       if (buttonsKey && buttonsKey !== lastButtonsKey) {
         lastButtonsKey = buttonsKey;
         waitingForBrandReply = false;
@@ -910,7 +957,6 @@ async function runChatSession(
         pushTranscript('system', `Detected options: ${buttonLabels.join(' | ')}`);
       }
 
-      // Detect chat input unlocking (disabled -> enabled)
       if (state.inputEnabled && !prevInputEnabled) {
         waitingForBrandReply = false;
         pendingStateTrigger = true;
@@ -920,7 +966,6 @@ async function runChatSession(
 
       if (agentConnected && !chat.aiPaused) break;
 
-      // Track DOM stability so we wait for the brand's assistant to finish sending multi-bubble replies + buttons
       const fingerprint = `${state.messages.map((m) => m.text).join('|')}##${buttonsKey}##${state.inputEnabled}`;
       if (state.isTyping || fingerprint !== prevFingerprint) {
         prevFingerprint = fingerprint;
@@ -930,14 +975,11 @@ async function runChatSession(
       }
       stableChecks++;
 
-      // Wait until brand response settles (2 consecutive stable polls = ~3s of quiet)
       if (stableChecks < 2) {
         await page.waitForTimeout(1500);
         continue;
       }
 
-      // If we just clicked/sent something and are waiting for the brand assistant to reply,
-      // allow up to 20s for a reply before nudging (only if input is enabled or new buttons exist)
       const msSinceAction = Date.now() - lastActionAt;
       if (waitingForBrandReply && msSinceAction < 20000) {
         await page.waitForTimeout(1500);
@@ -985,7 +1027,6 @@ async function runChatSession(
 
           let execRes = await executeReply(vapiReply, 'assistant');
 
-          // Auto-recover if Vapi wrote a sentence while input was still disabled
           if (!execRes.ok && execRes.reason === 'input_disabled' && execRes.buttons?.length) {
             const retryPrompt = buildVapiPrompt({
               header: 'Your previous reply could not be typed because the text input is disabled.',
