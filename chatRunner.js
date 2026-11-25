@@ -1,5 +1,5 @@
 const { chromium } = require('playwright-core');
-const { BRANDS, PROMPTS, resolveBrandUrl } = require('./brands');
+const { BRANDS, resolveBrandUrl } = require('./brands');
 
 function getBrowserEndpoint() {
   let endpoint =
@@ -17,6 +17,75 @@ function getBrowserEndpoint() {
     endpoint += (endpoint.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
   }
   return endpoint;
+}
+
+function resolveVapiAssistantId(useCase, language) {
+  const uc = /sale/i.test(useCase || '') ? 'SALES' : 'BILLING';
+  const lang = /^fr/i.test(language || '') ? 'FR' : 'EN';
+  return (
+    process.env[`VAPI_ASSISTANT_ID_${uc}_${lang}`] ||
+    process.env[`VAPI_ASSISTANT_ID_${uc}`] ||
+    process.env.VAPI_ASSISTANT_ID ||
+    ''
+  );
+}
+
+async function createVapiSession(structuredOutputs) {
+  const apiKey = process.env.VAPI_API_KEY;
+  const assistantId = resolveVapiAssistantId(
+    structuredOutputs.useCase,
+    structuredOutputs.language
+  );
+  if (!apiKey || !assistantId) return null;
+
+  const res = await fetch('https://api.vapi.ai/session', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      assistantId,
+      assistantOverrides: {
+        variableValues: {
+          brand: structuredOutputs.brand,
+          segment: structuredOutputs.segment,
+          useCase: structuredOutputs.useCase,
+          language: structuredOutputs.language
+        }
+      }
+    })
+  });
+
+  if (!res.ok) {
+    throw new Error(`Vapi /session failed (${res.status}): ${await res.text()}`);
+  }
+  const data = await res.json();
+  return { sessionId: data.id, assistantId };
+}
+
+async function askVapiChat(sessionId, inputText) {
+  const apiKey = process.env.VAPI_API_KEY;
+  const res = await fetch('https://api.vapi.ai/chat', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      sessionId,
+      input: inputText
+    })
+  });
+
+  if (!res.ok) {
+    throw new Error(`Vapi /chat failed (${res.status}): ${await res.text()}`);
+  }
+  const data = await res.json();
+  const replies = (data.output || [])
+    .filter((m) => m.role === 'assistant' && m.content)
+    .map((m) => m.content.trim());
+  return replies.join(' ').trim();
 }
 
 const AGENT_JOIN_REGEX =
@@ -60,7 +129,6 @@ async function clickBottomRightLauncher(page) {
       if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) {
         continue;
       }
-
       const rect = el.getBoundingClientRect();
       if (rect.width < 32 || rect.width > 220 || rect.height < 32 || rect.height > 100) continue;
       if (rect.right < vw - 80 || rect.bottom < vh - 100) continue;
@@ -108,6 +176,49 @@ async function scrapeMessages(page, selector) {
   return texts;
 }
 
+async function scrapeQuickReplyButtons(page) {
+  const labels = [];
+  const btnSelector =
+    '[class*="quick-reply"] button, [class*="quickReply"] button, [class*="chat"] button:not([type="submit"]), [role="dialog"] button:not([type="submit"])';
+  for (const frame of page.frames()) {
+    try {
+      const buttons = frame.locator(btnSelector);
+      const count = Math.min(await buttons.count(), 12);
+      for (let i = 0; i < count; i++) {
+        const btn = buttons.nth(i);
+        if (!(await btn.isVisible({ timeout: 200 }).catch(() => false))) continue;
+        const txt = (await btn.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+        if (txt.length >= 2 && txt.length <= 60 && !labels.includes(txt)) {
+          labels.push(txt);
+        }
+      }
+    } catch (_) {}
+  }
+  return labels;
+}
+
+async function tryClickQuickReply(page, replyText) {
+  const normalized = replyText.replace(/["'.!?]/g, '').trim().toLowerCase();
+  if (!normalized || normalized.length > 60) return false;
+
+  for (const frame of page.frames()) {
+    try {
+      const buttons = frame.locator('button, [role="button"]');
+      const count = Math.min(await buttons.count(), 25);
+      for (let i = 0; i < count; i++) {
+        const btn = buttons.nth(i);
+        if (!(await btn.isVisible({ timeout: 150 }).catch(() => false))) continue;
+        const txt = (await btn.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+        if (txt && txt.toLowerCase() === normalized) {
+          await btn.click({ timeout: 3000 });
+          return true;
+        }
+      }
+    } catch (_) {}
+  }
+  return false;
+}
+
 async function detectChatSystem(page) {
   try {
     const urls = page.frames().map((f) => f.url().toLowerCase()).join(' ');
@@ -129,6 +240,7 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
   const brandCfg = BRANDS[s.brand] || BRANDS.Rogers;
   const endpoint = getBrowserEndpoint();
   const maxDurationMs = Number(process.env.MAX_CHAT_DURATION_SEC || 240) * 1000;
+  const maxVapiTurns = Number(process.env.MAX_VAPI_TURNS || 12);
   const startedAt = Date.now();
   const pathSteps = [];
 
@@ -155,6 +267,14 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
     chat.status = 'in-progress';
     onUpdate();
 
+    // 1. Initialize Vapi Chat Session
+    const vapi = await createVapiSession(s);
+    if (!vapi) {
+      throw new Error('Missing VAPI_API_KEY or VAPI_ASSISTANT_ID environment variable.');
+    }
+    pushTranscript('system', `Vapi Chat Session started (${vapi.sessionId})`);
+
+    // 2. Connect to Browserless Chromium
     browser = await chromium.connectOverCDP(endpoint, { timeout: 25000 });
     context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
@@ -185,7 +305,7 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
 
     screenshotTimer = setInterval(captureFrame, 3000);
 
-    // 1. Wait for launcher button (Need Help? / bottom-right chat icon)
+    // 3. Click launcher (Need Help? / bottom-right yellow icon)
     const launcher = await waitForInFrames(page, brandCfg.selectors.openChat, 15000);
     if (launcher) {
       await launcher
@@ -208,51 +328,76 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
     s.systemUsed = await detectChatSystem(page);
     onUpdate();
 
-    // 2. Locate chat input inside page or frames
+    // 4. Vapi-driven conversation loop
     const input = await waitForInFrames(page, brandCfg.selectors.input, 10000);
-    const langKey = /^fr/i.test(s.language) ? 'FR' : 'EN';
-    const ucKey = /sale/i.test(s.useCase) ? 'Sales' : 'Billing';
-    const scriptPrompts = PROMPTS[langKey]?.[ucKey] || PROMPTS.EN.Billing;
-
-    const seenMessages = new Set(await scrapeMessages(page, brandCfg.selectors.messages));
-    let firstPromptSentAt = null;
-    let escalationRequestedAt = null;
+    const seenMessages = new Set();
+    const sentByUs = new Set();
+    let turns = 0;
+    let firstMessageSentAt = null;
     let botReplied = false;
     let agentConnected = false;
 
+    const sendToCarrier = async (replyText) => {
+      if (!replyText) return;
+      // Check if Vapi chose an exact quick-reply button label
+      const clickedBtn = await tryClickQuickReply(page, replyText);
+      if (clickedBtn) {
+        sentByUs.add(replyText);
+        pathSteps.push(`Clicked "${replyText}"`);
+        pushTranscript('assistant', `[Button] ${replyText}`);
+      } else {
+        const activeInput = await findInFrames(page, brandCfg.selectors.input);
+        if (!activeInput) return;
+        await activeInput.fill(replyText);
+        await activeInput.press('Enter').catch(async () => {
+          const sendBtn = await findInFrames(page, brandCfg.selectors.send);
+          if (sendBtn) await sendBtn.click().catch(() => {});
+        });
+        sentByUs.add(replyText);
+        pushTranscript('assistant', replyText);
+      }
+      if (!firstMessageSentAt) firstMessageSentAt = Date.now();
+      turns++;
+    };
+
     if (input) {
-      await input.fill(scriptPrompts[0]);
-      await input.press('Enter').catch(async () => {
-        const sendBtn = await findInFrames(page, brandCfg.selectors.send);
-        if (sendBtn) await sendBtn.click().catch(() => {});
+      // Read initial greeting + any buttons from carrier widget
+      const initialMsgs = await scrapeMessages(page, brandCfg.selectors.messages);
+      const initialBtns = await scrapeQuickReplyButtons(page);
+      initialMsgs.forEach((m) => {
+        seenMessages.add(m);
+        pushTranscript('user', m);
       });
-      firstPromptSentAt = Date.now();
-      pathSteps.push('Sent opening prompt');
-      pushTranscript('assistant', scriptPrompts[0]);
 
-      let escalated = false;
+      const openingContext = [
+        `Chat opened on ${s.brand} (${s.segment} - ${s.useCase} - ${s.language}).`,
+        initialMsgs.length ? `Carrier greeting: ${initialMsgs.join(' | ')}` : 'No greeting yet.',
+        initialBtns.length ? `Available quick-reply buttons: ${initialBtns.join(', ')}` : ''
+      ]
+        .filter(Boolean)
+        .join('\n');
 
-      while (!shouldStop() && Date.now() - startedAt < maxDurationMs) {
-        await page.waitForTimeout(2500);
+      const firstReply = await askVapiChat(vapi.sessionId, openingContext);
+      await sendToCarrier(firstReply);
+
+      // Listen for new carrier messages and relay them to Vapi
+      while (!shouldStop() && Date.now() - startedAt < maxDurationMs && turns < maxVapiTurns) {
+        await page.waitForTimeout(3000);
         const currentMessages = await scrapeMessages(page, brandCfg.selectors.messages);
+        const freshBatch = [];
 
         for (const msg of currentMessages) {
-          if (seenMessages.has(msg) || msg === scriptPrompts[0] || msg === scriptPrompts[1]) {
-            continue;
-          }
+          if (seenMessages.has(msg) || sentByUs.has(msg)) continue;
           seenMessages.add(msg);
+          freshBatch.push(msg);
 
-          // Capture first bot reply speed
-          if (!botReplied && firstPromptSentAt) {
+          if (!botReplied && firstMessageSentAt) {
             botReplied = true;
-            const botSec = Math.round((Date.now() - firstPromptSentAt) / 1000);
+            const botSec = Math.round((Date.now() - firstMessageSentAt) / 1000);
             s.botResponseSec = botSec;
-            if (!s.waitTimes || s.waitTimes === '—') {
-              s.waitTimes = `Bot: ${botSec}s`;
-            }
+            if (!s.waitTimes || s.waitTimes === '—') s.waitTimes = `Bot: ${botSec}s`;
           }
 
-          // Extract reported wait time & HOOPs if mentioned
           const waitMatch = msg.match(WAIT_TIME_REGEX);
           if (waitMatch) s.waitTimes = waitMatch[1];
 
@@ -261,8 +406,8 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
 
           pushTranscript('user', msg);
 
-          if (escalated && AGENT_JOIN_REGEX.test(msg)) {
-            const ttaSec = Math.round((Date.now() - escalationRequestedAt) / 1000);
+          if (AGENT_JOIN_REGEX.test(msg)) {
+            const ttaSec = Math.round((Date.now() - (firstMessageSentAt || startedAt)) / 1000);
             s.timeToAgent = `${ttaSec}s`;
             agentConnected = true;
             pathSteps.push(`Live agent joined in ${ttaSec}s`);
@@ -274,35 +419,36 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
 
         if (agentConnected) break;
 
-        if (
-          !escalated &&
-          firstPromptSentAt &&
-          (botReplied || Date.now() - firstPromptSentAt > 15000)
-        ) {
-          const activeInput = await findInFrames(page, brandCfg.selectors.input);
-          if (activeInput) {
-            await activeInput.fill(scriptPrompts[1]).catch(() => {});
-            await activeInput.press('Enter').catch(async () => {
-              const sendBtn = await findInFrames(page, brandCfg.selectors.send);
-              if (sendBtn) await sendBtn.click().catch(() => {});
-            });
-            escalationRequestedAt = Date.now();
-            escalated = true;
-            pathSteps.push('Requested live agent');
-            pushTranscript('assistant', scriptPrompts[1]);
+        if (freshBatch.length > 0) {
+          const btns = await scrapeQuickReplyButtons(page);
+          const vapiInput = [
+            `Carrier said: ${freshBatch.join(' | ')}`,
+            btns.length ? `Available buttons: ${btns.join(', ')}` : ''
+          ]
+            .filter(Boolean)
+            .join('\n');
+
+          const vapiReply = await askVapiChat(vapi.sessionId, vapiInput);
+          // Let your Vapi assistant signal completion (e.g. "[END_CHAT]") if desired
+          if (/\[END_CHAT\]/i.test(vapiReply)) {
+            pathSteps.push('Vapi ended chat');
+            pushTranscript('system', 'Vapi assistant signaled end of chat.');
+            break;
           }
+          await sendToCarrier(vapiReply);
+          await captureFrame();
         }
       }
 
-      if (!agentConnected) {
+      if (!agentConnected && !s.cxToAgent) {
         s.cxToAgent = shouldStop()
           ? 'Session ended manually before live agent connected.'
-          : 'Timed out waiting for live agent connection.';
+          : 'Timed out or hit max turns waiting for live agent.';
       }
     } else {
       pathSteps.push('Chat input not found');
       s.cxToAgent =
-        'Could not locate chat input automatically. Check the captured Chromium screenshot to inspect pre-chat buttons or geo-blocking.';
+        'Could not locate chat input automatically. Check the captured Chromium screenshot to tune selectors.';
       pushTranscript('system', s.cxToAgent);
     }
 
