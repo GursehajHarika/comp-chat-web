@@ -17,12 +17,11 @@ function getBrowserEndpoint() {
     endpoint += (endpoint.includes('?') ? '&' : '?') + `token=${encodeURIComponent(token)}`;
   }
 
-  // Forward optional Canadian proxy to Browserless launch args if configured
+  // Browserless v2 expects proxy args inside the JSON `launch` query param
   const proxyUrl = (process.env.PROXY_URL || '').trim();
-  if (proxyUrl && !endpoint.includes('--proxy-server=')) {
-    endpoint +=
-      (endpoint.includes('?') ? '&' : '?') +
-      `--proxy-server=${encodeURIComponent(proxyUrl)}`;
+  if (proxyUrl && !endpoint.includes('launch=')) {
+    const launch = JSON.stringify({ args: [`--proxy-server=${proxyUrl}`] });
+    endpoint += (endpoint.includes('?') ? '&' : '?') + `launch=${encodeURIComponent(launch)}`;
   }
 
   return endpoint;
@@ -204,7 +203,6 @@ async function inspectChatState(page, inputSelector) {
             ) {
               return false;
             }
-            // Exclude screen-reader-only / visually-hidden accessibility containers
             const cls = typeof el.className === 'string' ? el.className.toLowerCase() : '';
             if (/(sr-only|visually-hidden|cdk-visually-hidden|screen-reader)/.test(cls)) {
               return false;
@@ -415,7 +413,6 @@ async function inspectChatState(page, inputSelector) {
             if (r.bottom <= rootRect.top + 46) continue;
             if (r.top >= rootRect.bottom - 52) continue;
 
-            // Skip containers that hold nested block/interactive elements or multiple paragraphs
             let hasNestedBlock = false;
             for (const child of el.children || []) {
               if (!isVisible(child)) continue;
@@ -662,7 +659,7 @@ async function runChatSession(
   const captureFrame = async () => {
     if (!page) return;
     try {
-      const buf = await page.screenshot({ type: 'jpeg', quality: 50 });
+      const buf = await page.screenshot({ type: 'jpeg', quality: 50, timeout: 6000 });
       chat.lastScreenshot = `data:image/jpeg;base64,${buf.toString('base64')}`;
       onUpdate();
     } catch (_) {}
@@ -779,35 +776,29 @@ async function runChatSession(
       onUpdate();
     }
 
+    pushTranscript('system', 'Connecting to Chromium...');
     browser = await chromium.connectOverCDP(endpoint, { timeout: 25000 });
 
-    // Match the real Chromium version installed in Browserless (avoids Chrome 128 warning & Akamai UA mismatch)
     const rawVer = browser.version() || '140.0.0.0';
     const chromeVer = rawVer.replace(/^[^0-9]*/, '') || '140.0.0.0';
-    const contextOptions = {
+    pushTranscript('system', `Chromium connected (v${chromeVer})`);
+
+    context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       locale: /^fr/i.test(s.language) ? 'fr-CA' : 'en-CA',
-      timezoneId: 'America/Toronto',
-      userAgent: `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
-    };
-
-    if (process.env.PROXY_URL) {
-      contextOptions.proxy = { server: process.env.PROXY_URL };
-      if (process.env.PROXY_USERNAME) contextOptions.proxy.username = process.env.PROXY_USERNAME;
-      if (process.env.PROXY_PASSWORD) contextOptions.proxy.password = process.env.PROXY_PASSWORD;
-    }
-
-    context = await browser.newContext(contextOptions);
-
-    // Mask automation flag so WAFs don't reject chat API calls
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-      Object.defineProperty(navigator, 'languages', { get: () => ['en-CA', 'en-US', 'en'] });
+      userAgent: `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`
     });
+
+    await context
+      .addInitScript(() => {
+        try {
+          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        } catch (_) {}
+      })
+      .catch(() => {});
 
     page = await context.newPage();
 
-    // Surface failed chat API responses (e.g. 403 WAF or geo-block) directly in Live Feed
     page.on('response', (res) => {
       const status = res.status();
       const url = res.url();
@@ -821,18 +812,20 @@ async function runChatSession(
       }
     });
 
+    // Start live preview immediately so the viewport shows even while loading
+    screenshotTimer = setInterval(captureFrame, 3000);
+
     const targetUrl =
       chat.targetUrl || resolveBrandUrl(s.brand, s.segment, s.useCase, s.language);
     chat.targetUrl = targetUrl;
     pathSteps.push(`Loaded ${targetUrl}`);
     pushTranscript('system', `Navigating to ${targetUrl}`);
 
-    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await page.waitForTimeout(4000);
+    await page.goto(targetUrl, { waitUntil: 'commit', timeout: 35000 });
+    await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(3500);
     await page.evaluate(() => window.scrollBy(0, 250)).catch(() => {});
     await captureFrame();
-
-    screenshotTimer = setInterval(captureFrame, 3000);
 
     // Click launcher (Need Help? / bottom-right yellow icon)
     const launcher = await waitForInFrames(page, brandCfg.selectors.openChat, 15000);
