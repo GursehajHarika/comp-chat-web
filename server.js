@@ -22,13 +22,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const chats = new Map();
 const stopFlags = new Set();
+const liveControllers = new Map();
 
 function loadChats() {
   try {
     if (fs.existsSync(CHATS_FILE)) {
       const parsed = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'));
       for (const c of parsed) {
-        // Recover any orphaned in-progress sessions after a restart
         if (['in-progress', 'queued', 'ringing'].includes(c.status)) {
           c.status = 'ended';
           c.endedAt = c.endedAt || new Date().toISOString();
@@ -46,7 +46,6 @@ function saveChats() {
     const all = Array.from(chats.values()).sort(
       (a, b) => new Date(b.startedAt) - new Date(a.startedAt)
     );
-    // Keep screenshots on latest 30 sessions so chats.json stays fast
     const trimmed = all.map((c, idx) =>
       idx > 30 ? { ...c, lastScreenshot: null } : c
     );
@@ -73,12 +72,16 @@ wss.on('connection', (ws) => {
 
 function startSessionExecution(chat) {
   chat.status = 'queued';
+  chat.aiPaused = false;
   chat.startedAt = new Date().toISOString();
   chats.set(chat.id, chat);
   saveChats();
   broadcast('CHAT_UPDATED', chat);
 
   runChatSession(chat, {
+    onRegisterController: (controller) => {
+      liveControllers.set(chat.id, controller);
+    },
     onUpdate: () => {
       chats.set(chat.id, chat);
       broadcast('CHAT_UPDATED', chat);
@@ -88,6 +91,7 @@ function startSessionExecution(chat) {
     },
     onComplete: () => {
       stopFlags.delete(chat.id);
+      liveControllers.delete(chat.id);
       chats.set(chat.id, chat);
       saveChats();
       broadcast('CHAT_UPDATED', chat);
@@ -127,7 +131,6 @@ app.post('/api/chats/start', (req, res) => {
   const normLang = /^fr/i.test(language) ? 'FR' : 'EN';
   const normUc = /sale/i.test(useCase) ? 'Sales' : 'Billing';
 
-  // Smart conflict detection for scheduled runs (15-min overlap on identical config)
   if (scheduleAt) {
     const targetMs = new Date(scheduleAt).getTime();
     const conflict = Array.from(chats.values()).find((c) => {
@@ -153,6 +156,7 @@ app.post('/api/chats/start', (req, res) => {
   const chat = {
     id,
     status: scheduleAt ? 'scheduled' : 'queued',
+    aiPaused: false,
     targetUrl: resolvedUrl,
     bucket: scheduleBucket || '',
     startedAt: scheduleAt || new Date().toISOString(),
@@ -178,12 +182,40 @@ app.post('/api/chats/start', (req, res) => {
   saveChats();
   broadcast('CHAT_UPDATED', chat);
 
-  if (scheduleAt) {
-    return res.json({ scheduled: true, chat });
-  }
+  if (scheduleAt) return res.json({ scheduled: true, chat });
 
   startSessionExecution(chat);
   res.json({ scheduled: false, chat });
+});
+
+// Disengage / Re-engage Vapi AI mid-chat
+app.post('/api/chats/:id/takeover', (req, res) => {
+  const controller = liveControllers.get(req.params.id);
+  if (!controller) return res.status(404).json({ error: 'Chat session is not live.' });
+  controller.setAiPaused(Boolean(req.body.paused));
+  res.json({ ok: true, aiPaused: Boolean(req.body.paused) });
+});
+
+// Send manual message mid-chat
+app.post('/api/chats/:id/message', async (req, res) => {
+  const controller = liveControllers.get(req.params.id);
+  if (!controller) return res.status(404).json({ error: 'Chat session is not live.' });
+  const text = String(req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Message text is required.' });
+  const sent = await controller.sendManualMessage(text);
+  res.json({ ok: sent });
+});
+
+// Manual click directly on live Chromium screenshot
+app.post('/api/chats/:id/click', async (req, res) => {
+  const controller = liveControllers.get(req.params.id);
+  if (!controller) return res.status(404).json({ error: 'Chat session is not live.' });
+  const { xRatio, yRatio } = req.body;
+  if (typeof xRatio !== 'number' || typeof yRatio !== 'number') {
+    return res.status(400).json({ error: 'xRatio and yRatio are required.' });
+  }
+  const ok = await controller.clickAtRatio(xRatio, yRatio);
+  res.json({ ok });
 });
 
 app.post('/api/chats/:id/end', (req, res) => {
@@ -219,7 +251,6 @@ app.post('/api/chats/bulk-delete', (req, res) => {
   res.json({ ok: true, deleted: ids.length });
 });
 
-// Scheduler loop (runs every 10s)
 setInterval(() => {
   const now = Date.now();
   for (const chat of chats.values()) {

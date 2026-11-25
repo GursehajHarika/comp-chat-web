@@ -72,20 +72,18 @@ async function askVapiChat(sessionId, inputText) {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      sessionId,
-      input: inputText
-    })
+    body: JSON.stringify({ sessionId, input: inputText })
   });
 
   if (!res.ok) {
     throw new Error(`Vapi /chat failed (${res.status}): ${await res.text()}`);
   }
   const data = await res.json();
-  const replies = (data.output || [])
+  return (data.output || [])
     .filter((m) => m.role === 'assistant' && m.content)
-    .map((m) => m.content.trim());
-  return replies.join(' ').trim();
+    .map((m) => m.content.trim())
+    .join(' ')
+    .trim();
 }
 
 const AGENT_JOIN_REGEX =
@@ -235,11 +233,15 @@ async function detectChatSystem(page) {
   }
 }
 
-async function runChatSession(chat, { onUpdate, onTranscript, onComplete, shouldStop }) {
+async function runChatSession(
+  chat,
+  { onUpdate, onTranscript, onComplete, onRegisterController, shouldStop }
+) {
   const s = chat.structuredOutputs;
   const brandCfg = BRANDS[s.brand] || BRANDS.Rogers;
   const endpoint = getBrowserEndpoint();
-  const maxDurationMs = Number(process.env.MAX_CHAT_DURATION_SEC || 240) * 1000;
+  const aiMaxDurationMs = Number(process.env.MAX_CHAT_DURATION_SEC || 240) * 1000;
+  const manualMaxDurationMs = Number(process.env.MAX_MANUAL_DURATION_SEC || 900) * 1000;
   const maxVapiTurns = Number(process.env.MAX_VAPI_TURNS || 12);
   const startedAt = Date.now();
   const pathSteps = [];
@@ -261,18 +263,119 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
 
   let browser;
   let context;
+  let page;
   let screenshotTimer;
+
+  // Shared state for mid-chat human takeover
+  const seenMessages = new Set();
+  const sentByUs = new Set();
+  const pendingManualNotes = [];
+  let firstMessageSentAt = null;
+  let vapiStarted = false;
+  let actionLock = Promise.resolve();
+
+  const enqueueAction = (fn) => {
+    const next = actionLock.then(fn, fn);
+    actionLock = next.catch(() => {});
+    return next;
+  };
+
+  const captureFrame = async () => {
+    if (!page) return;
+    try {
+      const buf = await page.screenshot({ type: 'jpeg', quality: 50 });
+      chat.lastScreenshot = `data:image/jpeg;base64,${buf.toString('base64')}`;
+      onUpdate();
+    } catch (_) {}
+  };
+
+  const sendToCarrier = async (replyText, senderRole = 'assistant') => {
+    if (!page || !replyText) return false;
+    return enqueueAction(async () => {
+      const clickedBtn = await tryClickQuickReply(page, replyText);
+      if (clickedBtn) {
+        sentByUs.add(replyText);
+        pathSteps.push(`${senderRole === 'operator' ? 'Manual' : 'AI'} clicked "${replyText}"`);
+        pushTranscript(senderRole, `[Button] ${replyText}`);
+      } else {
+        const activeInput = await findInFrames(page, brandCfg.selectors.input);
+        if (!activeInput) {
+          if (senderRole === 'operator') {
+            pushTranscript('system', 'No chat input found yet — click the screenshot to open the chat box first.');
+          }
+          return false;
+        }
+        await activeInput.fill(replyText);
+        await activeInput.press('Enter').catch(async () => {
+          const sendBtn = await findInFrames(page, brandCfg.selectors.send);
+          if (sendBtn) await sendBtn.click().catch(() => {});
+        });
+        sentByUs.add(replyText);
+        pushTranscript(senderRole, replyText);
+      }
+
+      if (!firstMessageSentAt) firstMessageSentAt = Date.now();
+      if (senderRole === 'operator') {
+        pendingManualNotes.push(replyText);
+      }
+      await page.waitForTimeout(800);
+      await captureFrame();
+      return true;
+    });
+  };
+
+  // Expose live mid-chat controls to server.js
+  onRegisterController?.({
+    setAiPaused: (paused) => {
+      chat.aiPaused = Boolean(paused);
+      pushTranscript(
+        'system',
+        chat.aiPaused
+          ? 'Human Takeover active — Vapi AI disengaged.'
+          : 'Vapi AI re-engaged.'
+      );
+      onUpdate();
+    },
+    sendManualMessage: async (text) => {
+      const clean = String(text || '').trim();
+      if (!clean) return false;
+      return sendToCarrier(clean, 'operator');
+    },
+    clickAtRatio: async (xRatio, yRatio) => {
+      if (!page) return false;
+      return enqueueAction(async () => {
+        const vp = page.viewportSize() || { width: 1280, height: 800 };
+        const x = Math.max(1, Math.min(vp.width - 1, Math.round(xRatio * vp.width)));
+        const y = Math.max(1, Math.min(vp.height - 1, Math.round(yRatio * vp.height)));
+        await page.mouse.click(x, y);
+        pushTranscript('system', `Manual click at (${x}, ${y})`);
+        await page.waitForTimeout(1200);
+        await captureFrame();
+        return true;
+      });
+    }
+  });
 
   try {
     chat.status = 'in-progress';
     onUpdate();
 
-    // 1. Initialize Vapi Chat Session
-    const vapi = await createVapiSession(s);
-    if (!vapi) {
-      throw new Error('Missing VAPI_API_KEY or VAPI_ASSISTANT_ID environment variable.');
+    // 1. Initialize Vapi Chat Session (still allow pure manual mode if Vapi isn't configured)
+    let vapi = null;
+    try {
+      vapi = await createVapiSession(s);
+      if (vapi) {
+        pushTranscript('system', `Vapi Chat Session started (${vapi.sessionId})`);
+      } else {
+        chat.aiPaused = true;
+        pushTranscript('system', 'VAPI_API_KEY / VAPI_ASSISTANT_ID not set — running in Manual Mode.');
+        onUpdate();
+      }
+    } catch (vErr) {
+      chat.aiPaused = true;
+      pushTranscript('system', `Vapi init failed (${vErr.message}) — switched to Manual Mode.`);
+      onUpdate();
     }
-    pushTranscript('system', `Vapi Chat Session started (${vapi.sessionId})`);
 
     // 2. Connect to Browserless Chromium
     browser = await chromium.connectOverCDP(endpoint, { timeout: 25000 });
@@ -282,15 +385,7 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
     });
-    const page = await context.newPage();
-
-    const captureFrame = async () => {
-      try {
-        const buf = await page.screenshot({ type: 'jpeg', quality: 50 });
-        chat.lastScreenshot = `data:image/jpeg;base64,${buf.toString('base64')}`;
-        onUpdate();
-      } catch (_) {}
-    };
+    page = await context.newPage();
 
     const targetUrl =
       chat.targetUrl || resolveBrandUrl(s.brand, s.segment, s.useCase, s.language);
@@ -322,134 +417,141 @@ async function runChatSession(chat, { onUpdate, onTranscript, onComplete, should
       await captureFrame();
     } else {
       pathSteps.push('Launcher not detected');
-      pushTranscript('system', 'No launcher button detected — checking for open chat input');
+      pushTranscript(
+        'system',
+        'No launcher detected — you can click directly on the live screenshot to open chat.'
+      );
     }
 
     s.systemUsed = await detectChatSystem(page);
     onUpdate();
 
-    // 4. Vapi-driven conversation loop
-    const input = await waitForInFrames(page, brandCfg.selectors.input, 10000);
-    const seenMessages = new Set();
-    const sentByUs = new Set();
+    // 4. Live monitoring + Vapi / Human Takeover loop
     let turns = 0;
-    let firstMessageSentAt = null;
     let botReplied = false;
     let agentConnected = false;
 
-    const sendToCarrier = async (replyText) => {
-      if (!replyText) return;
-      // Check if Vapi chose an exact quick-reply button label
-      const clickedBtn = await tryClickQuickReply(page, replyText);
-      if (clickedBtn) {
-        sentByUs.add(replyText);
-        pathSteps.push(`Clicked "${replyText}"`);
-        pushTranscript('assistant', `[Button] ${replyText}`);
-      } else {
-        const activeInput = await findInFrames(page, brandCfg.selectors.input);
-        if (!activeInput) return;
-        await activeInput.fill(replyText);
-        await activeInput.press('Enter').catch(async () => {
-          const sendBtn = await findInFrames(page, brandCfg.selectors.send);
-          if (sendBtn) await sendBtn.click().catch(() => {});
-        });
-        sentByUs.add(replyText);
-        pushTranscript('assistant', replyText);
+    const initialInput = await waitForInFrames(page, brandCfg.selectors.input, 8000);
+    if (!initialInput) {
+      pushTranscript(
+        'system',
+        'Chat input not auto-detected yet — click the screenshot or Take Over to navigate manually.'
+      );
+    }
+
+    while (!shouldStop()) {
+      const elapsed = Date.now() - startedAt;
+      const limit = chat.aiPaused ? manualMaxDurationMs : aiMaxDurationMs;
+      if (elapsed >= limit) break;
+      if (!chat.aiPaused && turns >= maxVapiTurns) {
+        pushTranscript('system', 'Max AI turns reached — switching to Human Takeover so you can finish or end chat.');
+        chat.aiPaused = true;
+        onUpdate();
       }
-      if (!firstMessageSentAt) firstMessageSentAt = Date.now();
-      turns++;
-    };
 
-    if (input) {
-      // Read initial greeting + any buttons from carrier widget
-      const initialMsgs = await scrapeMessages(page, brandCfg.selectors.messages);
-      const initialBtns = await scrapeQuickReplyButtons(page);
-      initialMsgs.forEach((m) => {
-        seenMessages.add(m);
-        pushTranscript('user', m);
-      });
+      // Send Vapi's opening message once chat input is visible and AI is active
+      if (vapi && !vapiStarted && !chat.aiPaused) {
+        const inputReady = await findInFrames(page, brandCfg.selectors.input);
+        if (inputReady) {
+          const initialMsgs = await scrapeMessages(page, brandCfg.selectors.messages);
+          const initialBtns = await scrapeQuickReplyButtons(page);
+          initialMsgs.forEach((m) => {
+            if (!seenMessages.has(m)) {
+              seenMessages.add(m);
+              pushTranscript('user', m);
+            }
+          });
 
-      const openingContext = [
-        `Chat opened on ${s.brand} (${s.segment} - ${s.useCase} - ${s.language}).`,
-        initialMsgs.length ? `Carrier greeting: ${initialMsgs.join(' | ')}` : 'No greeting yet.',
-        initialBtns.length ? `Available quick-reply buttons: ${initialBtns.join(', ')}` : ''
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      const firstReply = await askVapiChat(vapi.sessionId, openingContext);
-      await sendToCarrier(firstReply);
-
-      // Listen for new carrier messages and relay them to Vapi
-      while (!shouldStop() && Date.now() - startedAt < maxDurationMs && turns < maxVapiTurns) {
-        await page.waitForTimeout(3000);
-        const currentMessages = await scrapeMessages(page, brandCfg.selectors.messages);
-        const freshBatch = [];
-
-        for (const msg of currentMessages) {
-          if (seenMessages.has(msg) || sentByUs.has(msg)) continue;
-          seenMessages.add(msg);
-          freshBatch.push(msg);
-
-          if (!botReplied && firstMessageSentAt) {
-            botReplied = true;
-            const botSec = Math.round((Date.now() - firstMessageSentAt) / 1000);
-            s.botResponseSec = botSec;
-            if (!s.waitTimes || s.waitTimes === '—') s.waitTimes = `Bot: ${botSec}s`;
-          }
-
-          const waitMatch = msg.match(WAIT_TIME_REGEX);
-          if (waitMatch) s.waitTimes = waitMatch[1];
-
-          const hoopsMatch = msg.match(HOOPS_REGEX);
-          if (hoopsMatch && !s.hoops) s.hoops = hoopsMatch[1];
-
-          pushTranscript('user', msg);
-
-          if (AGENT_JOIN_REGEX.test(msg)) {
-            const ttaSec = Math.round((Date.now() - (firstMessageSentAt || startedAt)) / 1000);
-            s.timeToAgent = `${ttaSec}s`;
-            agentConnected = true;
-            pathSteps.push(`Live agent joined in ${ttaSec}s`);
-            s.cxToAgent = `Live agent connected in ${ttaSec}s via ${s.systemUsed}.`;
-            onUpdate();
-            break;
-          }
-        }
-
-        if (agentConnected) break;
-
-        if (freshBatch.length > 0) {
-          const btns = await scrapeQuickReplyButtons(page);
-          const vapiInput = [
-            `Carrier said: ${freshBatch.join(' | ')}`,
-            btns.length ? `Available buttons: ${btns.join(', ')}` : ''
+          const openingContext = [
+            `Chat opened on ${s.brand} (${s.segment} - ${s.useCase} - ${s.language}).`,
+            initialMsgs.length ? `Carrier greeting: ${initialMsgs.join(' | ')}` : 'No greeting yet.',
+            initialBtns.length ? `Available quick-reply buttons: ${initialBtns.join(', ')}` : ''
           ]
             .filter(Boolean)
             .join('\n');
 
-          const vapiReply = await askVapiChat(vapi.sessionId, vapiInput);
-          // Let your Vapi assistant signal completion (e.g. "[END_CHAT]") if desired
-          if (/\[END_CHAT\]/i.test(vapiReply)) {
-            pathSteps.push('Vapi ended chat');
-            pushTranscript('system', 'Vapi assistant signaled end of chat.');
-            break;
+          vapiStarted = true;
+          const firstReply = await askVapiChat(vapi.sessionId, openingContext);
+          if (!chat.aiPaused && firstReply) {
+            await sendToCarrier(firstReply, 'assistant');
+            turns++;
           }
-          await sendToCarrier(vapiReply);
-          await captureFrame();
         }
       }
 
-      if (!agentConnected && !s.cxToAgent) {
-        s.cxToAgent = shouldStop()
-          ? 'Session ended manually before live agent connected.'
-          : 'Timed out or hit max turns waiting for live agent.';
+      await page.waitForTimeout(2500);
+      if (shouldStop()) break;
+
+      const currentMessages = await scrapeMessages(page, brandCfg.selectors.messages);
+      const freshBatch = [];
+
+      for (const msg of currentMessages) {
+        if (seenMessages.has(msg) || sentByUs.has(msg)) continue;
+        seenMessages.add(msg);
+        freshBatch.push(msg);
+
+        if (!botReplied && firstMessageSentAt) {
+          botReplied = true;
+          const botSec = Math.round((Date.now() - firstMessageSentAt) / 1000);
+          s.botResponseSec = botSec;
+          if (!s.waitTimes || s.waitTimes === '—') s.waitTimes = `Bot: ${botSec}s`;
+        }
+
+        const waitMatch = msg.match(WAIT_TIME_REGEX);
+        if (waitMatch) s.waitTimes = waitMatch[1];
+
+        const hoopsMatch = msg.match(HOOPS_REGEX);
+        if (hoopsMatch && !s.hoops) s.hoops = hoopsMatch[1];
+
+        pushTranscript('user', msg);
+
+        if (!agentConnected && AGENT_JOIN_REGEX.test(msg)) {
+          const ttaSec = Math.round((Date.now() - (firstMessageSentAt || startedAt)) / 1000);
+          s.timeToAgent = `${ttaSec}s`;
+          agentConnected = true;
+          pathSteps.push(`Live agent joined in ${ttaSec}s`);
+          s.cxToAgent = `Live agent connected in ${ttaSec}s via ${s.systemUsed}.`;
+          onUpdate();
+        }
       }
-    } else {
-      pathSteps.push('Chat input not found');
-      s.cxToAgent =
-        'Could not locate chat input automatically. Check the captured Chromium screenshot to tune selectors.';
-      pushTranscript('system', s.cxToAgent);
+
+      // If agent joined while AI is in control, stop cleanly; during Human Takeover, stay open for you
+      if (agentConnected && !chat.aiPaused) break;
+
+      // Only ask Vapi to reply when AI is engaged
+      if (vapi && !chat.aiPaused && freshBatch.length > 0) {
+        const btns = await scrapeQuickReplyButtons(page);
+        const manualContext = pendingManualNotes.length
+          ? `Note: Human operator manually sent earlier: ${pendingManualNotes.splice(0).join(' | ')}`
+          : '';
+
+        const vapiInput = [
+          manualContext,
+          `Carrier said: ${freshBatch.join(' | ')}`,
+          btns.length ? `Available buttons: ${btns.join(', ')}` : ''
+        ]
+          .filter(Boolean)
+          .join('\n');
+
+        const vapiReply = await askVapiChat(vapi.sessionId, vapiInput);
+        if (chat.aiPaused) continue; // Operator took over while Vapi was thinking
+
+        if (/\[END_CHAT\]/i.test(vapiReply)) {
+          pathSteps.push('Vapi ended chat');
+          pushTranscript('system', 'Vapi assistant signaled end of chat.');
+          break;
+        }
+        if (vapiReply) {
+          await sendToCarrier(vapiReply, 'assistant');
+          turns++;
+        }
+      }
+    }
+
+    if (!agentConnected && !s.cxToAgent) {
+      s.cxToAgent = shouldStop()
+        ? 'Session ended manually.'
+        : 'Timed out waiting for live agent.';
     }
 
     s.ivrOptions = pathSteps.join(' → ');
