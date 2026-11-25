@@ -1,252 +1,234 @@
 const express = require('express');
+const http = require('http');
+const { WebSocketServer } = require('ws');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const XLSX = require('xlsx');
-const { BRANDS } = require('./brands');
+const { resolveBrandUrl } = require('./brands');
 const { runChatSession, getBrowserEndpoint } = require('./chatRunner');
 
 const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const CHATS_FILE = path.join(DATA_DIR, 'chats.json');
-const SCHEDULES_FILE = path.join(DATA_DIR, 'schedules.json');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-function readJson(file, fallback) {
-  try {
-    if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch (_) {}
-  return fallback;
-}
-
-function writeJson(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
-}
-
-let chatHistory = readJson(CHATS_FILE, []);
-let schedules = readJson(SCHEDULES_FILE, []);
-const activeSessions = new Map();
+const chats = new Map();
 const stopFlags = new Set();
 
-function persistHistory() {
-  // Keep screenshots only on latest 40 records to keep JSON lean
-  const trimmed = chatHistory.map((c, idx) =>
-    idx > 40 ? { ...c, lastScreenshot: null } : c
-  );
-  writeJson(CHATS_FILE, trimmed);
+function loadChats() {
+  try {
+    if (fs.existsSync(CHATS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(CHATS_FILE, 'utf8'));
+      for (const c of parsed) {
+        // Recover any orphaned in-progress sessions after a restart
+        if (['in-progress', 'queued', 'ringing'].includes(c.status)) {
+          c.status = 'ended';
+          c.endedAt = c.endedAt || new Date().toISOString();
+        }
+        chats.set(c.id, c);
+      }
+    }
+  } catch (err) {
+    console.error('Failed loading chats.json:', err.message);
+  }
 }
 
-function launchSession({ brandId, segment = 'Billing', language = 'EN', customUrl = '' }) {
-  const brand = BRANDS[brandId];
-  if (!brand) throw new Error(`Unknown brand: ${brandId}`);
+function saveChats() {
+  try {
+    const all = Array.from(chats.values()).sort(
+      (a, b) => new Date(b.startedAt) - new Date(a.startedAt)
+    );
+    // Keep screenshots on latest 30 sessions so chats.json stays fast
+    const trimmed = all.map((c, idx) =>
+      idx > 30 ? { ...c, lastScreenshot: null } : c
+    );
+    fs.writeFileSync(CHATS_FILE, JSON.stringify(trimmed, null, 2));
+  } catch (err) {
+    console.error('Failed saving chats.json:', err.message);
+  }
+}
 
-  const id = crypto.randomUUID().slice(0, 8);
-  const session = {
-    id,
-    brandId,
-    brandName: brand.name,
-    brandColor: brand.color,
-    segment,
-    language,
-    customUrl,
-    status: 'running',
-    step: 'Queued...',
-    startedAt: new Date().toISOString(),
-    endedAt: null,
-    botResponseSec: null,
-    agentWaitSec: null,
-    totalDurationSec: 0,
-    transcript: [],
-    lastScreenshot: null,
-    error: null
-  };
+function broadcast(event, data) {
+  const payload = JSON.stringify({ event, data });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) {
+      client.send(payload);
+    }
+  }
+}
 
-  activeSessions.set(id, session);
+loadChats();
 
-  runChatSession(session, {
+wss.on('connection', (ws) => {
+  ws.send(JSON.stringify({ event: 'INIT_STATE', data: Array.from(chats.values()) }));
+});
+
+function startSessionExecution(chat) {
+  chat.status = 'queued';
+  chat.startedAt = new Date().toISOString();
+  chats.set(chat.id, chat);
+  saveChats();
+  broadcast('CHAT_UPDATED', chat);
+
+  runChatSession(chat, {
     onUpdate: () => {
-      activeSessions.set(id, { ...session });
+      chats.set(chat.id, chat);
+      broadcast('CHAT_UPDATED', chat);
+    },
+    onTranscript: (chatId, segment) => {
+      broadcast('TRANSCRIPT_UPDATE', { chatId, segment });
     },
     onComplete: () => {
-      activeSessions.delete(id);
-      stopFlags.delete(id);
-      chatHistory.unshift({ ...session });
-      persistHistory();
+      stopFlags.delete(chat.id);
+      chats.set(chat.id, chat);
+      saveChats();
+      broadcast('CHAT_UPDATED', chat);
     },
-    shouldStop: () => stopFlags.has(id)
+    shouldStop: () => stopFlags.has(chat.id)
   });
-
-  return session;
 }
 
 // --- API Routes ---
 
 app.get('/api/config', (req, res) => {
-  res.json({
-    brands: Object.values(BRANDS),
-    browserConfigured: Boolean(getBrowserEndpoint())
-  });
+  res.json({ browserConfigured: Boolean(getBrowserEndpoint()) });
 });
 
-app.get('/api/chats', (req, res) => {
-  res.json({
-    active: Array.from(activeSessions.values()),
-    history: chatHistory
-  });
+app.get('/api/sync-history', (req, res) => {
+  broadcast('INIT_STATE', Array.from(chats.values()));
+  res.json({ ok: true, count: chats.size });
 });
 
 app.post('/api/chats/start', (req, res) => {
-  const { brandIds = [], segment = 'Billing', language = 'EN', customUrl = '' } = req.body;
-  if (!brandIds.length) return res.status(400).json({ error: 'Select at least one brand.' });
+  const {
+    targetUrl,
+    brand = 'Rogers',
+    segment = 'Consumer',
+    useCase = 'Billing',
+    language = 'English',
+    scheduleAt = null,
+    scheduleBucket = ''
+  } = req.body;
 
-  const started = [];
-  for (const brandId of brandIds) {
-    if (BRANDS[brandId]) {
-      started.push(launchSession({ brandId, segment, language, customUrl }));
+  const resolvedUrl = (targetUrl || '').trim() || resolveBrandUrl(brand, segment, useCase, language);
+  if (!resolvedUrl) {
+    return res.status(400).json({ error: 'Target chat URL is required.' });
+  }
+
+  const normSeg = /business|smb/i.test(segment) ? 'SMB' : 'Consumer';
+  const normLang = /^fr/i.test(language) ? 'FR' : 'EN';
+  const normUc = /sale/i.test(useCase) ? 'Sales' : 'Billing';
+
+  // Smart conflict detection for scheduled runs (15-min overlap on identical config)
+  if (scheduleAt) {
+    const targetMs = new Date(scheduleAt).getTime();
+    const conflict = Array.from(chats.values()).find((c) => {
+      if (c.status !== 'scheduled') return false;
+      const s = c.structuredOutputs || {};
+      const sameConfig =
+        (s.brand || '').toLowerCase() === brand.toLowerCase() &&
+        s.segment === normSeg &&
+        s.useCase === normUc &&
+        s.language === normLang;
+      if (!sameConfig) return false;
+      return Math.abs(new Date(c.startedAt).getTime() - targetMs) < 15 * 60 * 1000;
+    });
+
+    if (conflict) {
+      return res.status(409).json({
+        error: `Conflict: ${brand} (${normSeg} • ${normUc} • ${normLang}) is already scheduled within 15 minutes.`
+      });
     }
   }
-  res.json({ started });
+
+  const id = `chat_${crypto.randomUUID().slice(0, 8)}`;
+  const chat = {
+    id,
+    status: scheduleAt ? 'scheduled' : 'queued',
+    targetUrl: resolvedUrl,
+    bucket: scheduleBucket || '',
+    startedAt: scheduleAt || new Date().toISOString(),
+    endedAt: null,
+    transcript: [],
+    lastScreenshot: null,
+    structuredOutputs: {
+      brand,
+      segment: normSeg,
+      useCase: normUc,
+      language: normLang,
+      waitTimes: '—',
+      timeToAgent: '—',
+      botResponseSec: null,
+      systemUsed: '',
+      hoops: '',
+      ivrOptions: '',
+      cxToAgent: ''
+    }
+  };
+
+  chats.set(id, chat);
+  saveChats();
+  broadcast('CHAT_UPDATED', chat);
+
+  if (scheduleAt) {
+    return res.json({ scheduled: true, chat });
+  }
+
+  startSessionExecution(chat);
+  res.json({ scheduled: false, chat });
 });
 
-app.post('/api/chats/:id/stop', (req, res) => {
+app.post('/api/chats/:id/end', (req, res) => {
   const { id } = req.params;
-  if (!activeSessions.has(id)) return res.status(404).json({ error: 'Session not active.' });
+  if (!chats.has(id)) return res.status(404).json({ error: 'Chat not found.' });
   stopFlags.add(id);
   res.json({ ok: true });
 });
 
-app.delete('/api/chats', (req, res) => {
-  const { ids = [] } = req.body;
-  const idSet = new Set(ids);
-  chatHistory = chatHistory.filter((c) => !idSet.has(c.id));
-  persistHistory();
-  res.json({ deleted: ids.length });
-});
-
-// --- Schedules with 15-min conflict detection ---
-
-app.get('/api/schedules', (req, res) => res.json(schedules));
-
-app.post('/api/schedules', (req, res) => {
-  const { brandIds = [], segment = 'Billing', language = 'EN', runAt } = req.body;
-  if (!brandIds.length || !runAt) {
-    return res.status(400).json({ error: 'brandIds and runAt are required.' });
-  }
-
-  const targetMs = new Date(runAt).getTime();
-  const conflict = schedules.find(
-    (s) =>
-      s.status === 'pending' &&
-      Math.abs(new Date(s.runAt).getTime() - targetMs) < 15 * 60 * 1000 &&
-      s.brandIds.some((b) => brandIds.includes(b))
-  );
-
-  if (conflict && !req.body.force) {
-    return res.status(409).json({
-      error: `Conflict: overlapping schedule within 15 minutes (${new Date(conflict.runAt).toLocaleString()}).`,
-      conflict
-    });
-  }
-
-  const item = {
-    id: crypto.randomUUID().slice(0, 8),
-    brandIds,
-    segment,
-    language,
-    runAt,
-    status: 'pending',
-    createdAt: new Date().toISOString()
-  };
-  schedules.push(item);
-  writeJson(SCHEDULES_FILE, schedules);
-  res.json(item);
-});
-
-app.delete('/api/schedules/:id', (req, res) => {
-  schedules = schedules.filter((s) => s.id !== req.params.id);
-  writeJson(SCHEDULES_FILE, schedules);
+app.delete('/api/chats/schedule/:id', (req, res) => {
+  const { id } = req.params;
+  if (!chats.has(id)) return res.status(404).json({ error: 'Schedule not found.' });
+  chats.delete(id);
+  saveChats();
+  broadcast('CHAT_DELETED', { id });
   res.json({ ok: true });
 });
 
-// --- Excel Matrix + Raw Logs Export ---
-
-app.get('/api/export', (req, res) => {
-  const wb = XLSX.utils.book_new();
-
-  // Sheet 1: Brand Summary Matrix
-  const summaryRows = Object.values(BRANDS).map((b) => {
-    const logs = chatHistory.filter((c) => c.brandId === b.id);
-    const avg = (vals) =>
-      vals.length ? Number((vals.reduce((a, x) => a + x, 0) / vals.length).toFixed(1)) : '-';
-
-    const botTimes = logs.map((c) => c.botResponseSec).filter((v) => v !== null);
-    const waitTimes = logs.map((c) => c.agentWaitSec).filter((v) => v !== null);
-    const billingWait = logs
-      .filter((c) => c.segment === 'Billing' && c.agentWaitSec !== null)
-      .map((c) => c.agentWaitSec);
-    const salesWait = logs
-      .filter((c) => c.segment === 'Sales' && c.agentWaitSec !== null)
-      .map((c) => c.agentWaitSec);
-
-    return {
-      Brand: b.name,
-      'Total Runs': logs.length,
-      'Avg Bot Reply (s)': avg(botTimes),
-      'Avg Agent Wait (s)': avg(waitTimes),
-      'Billing Wait (s)': avg(billingWait),
-      'Sales Wait (s)': avg(salesWait)
-    };
-  });
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Summary Matrix');
-
-  // Sheet 2: Raw Logs
-  const rawRows = chatHistory.map((c) => ({
-    ID: c.id,
-    Date: c.startedAt.slice(0, 10),
-    Time: new Date(c.startedAt).toLocaleTimeString(),
-    Brand: c.brandName,
-    Segment: c.segment,
-    Language: c.language,
-    Status: c.status,
-    'Bot Reply (s)': c.botResponseSec ?? '',
-    'Agent Wait (s)': c.agentWaitSec ?? '',
-    'Total Duration (s)': c.totalDurationSec,
-    Transcript: c.transcript.map((m) => `[${m.sender}] ${m.text}`).join(' | ')
-  }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rawRows), 'Chat Logs');
-
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-  res.setHeader('Content-Disposition', 'attachment; filename="comp-chat-report.xlsx"');
-  res.setHeader(
-    'Content-Type',
-    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-  );
-  res.send(buf);
+app.delete('/api/chats/:id', (req, res) => {
+  const { id } = req.params;
+  if (!chats.has(id)) return res.status(404).json({ error: 'Chat not found.' });
+  chats.delete(id);
+  saveChats();
+  broadcast('CHAT_DELETED', { id });
+  res.json({ ok: true });
 });
 
-// Scheduler loop (every 30s)
+app.post('/api/chats/bulk-delete', (req, res) => {
+  const { ids = [] } = req.body;
+  ids.forEach((id) => chats.delete(id));
+  saveChats();
+  broadcast('CHATS_BULK_DELETED', { ids });
+  res.json({ ok: true, deleted: ids.length });
+});
+
+// Scheduler loop (runs every 10s)
 setInterval(() => {
   const now = Date.now();
-  let changed = false;
-  for (const sched of schedules) {
-    if (sched.status === 'pending' && new Date(sched.runAt).getTime() <= now) {
-      sched.status = 'triggered';
-      changed = true;
-      for (const brandId of sched.brandIds) {
-        if (BRANDS[brandId]) {
-          launchSession({ brandId, segment: sched.segment, language: sched.language });
-        }
-      }
+  for (const chat of chats.values()) {
+    if (chat.status === 'scheduled' && new Date(chat.startedAt).getTime() <= now) {
+      startSessionExecution(chat);
     }
   }
-  if (changed) writeJson(SCHEDULES_FILE, schedules);
-}, 30000);
+}, 10000);
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Comp Chat dashboard running on port ${PORT}`);
 });

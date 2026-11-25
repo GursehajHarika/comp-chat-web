@@ -1,650 +1,1887 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Comp Chat — Competitive Chat Monitor</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Comp Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <style>
-    :root {
-      --bg: #0b0f14;
-      --surface: #131922;
-      --surface-2: #1b2330;
-      --border: #253042;
-      --text: #eef2f7;
-      --muted: #8b9bb4;
-      --green: #11b34a;
-      --green-hover: #0e9a3f;
-      --danger: #e5484d;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.45;
-    }
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 24px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 20;
-    }
-    .brand-title { display: flex; align-items: center; gap: 12px; }
-    .brand-title h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
-    .pill {
-      font-size: 11px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-weight: 600;
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      color: var(--muted);
-    }
-    .pill.ok { color: #3dd68c; border-color: rgba(17,179,74,0.4); background: rgba(17,179,74,0.12); }
-    .pill.warn { color: #f5a524; border-color: rgba(245,165,36,0.4); background: rgba(245,165,36,0.12); }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-    button {
-      cursor: pointer;
-      border: 1px solid var(--border);
-      background: var(--surface-2);
-      color: var(--text);
-      padding: 8px 14px;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      transition: 0.15s;
-    }
-    button:hover { border-color: #3c4d66; }
-    button.primary { background: var(--green); border-color: var(--green); color: #fff; }
-    button.primary:hover { background: var(--green-hover); }
-    button.danger { background: rgba(229,72,77,0.14); border-color: rgba(229,72,77,0.4); color: #ff7b7f; }
-    button.sm { padding: 5px 10px; font-size: 12px; }
-
-    main { max-width: 1440px; margin: 0 auto; padding: 20px 24px 60px; }
-
-    /* Top Scrollable Brand Cards */
-    .cards-row {
-      display: flex;
-      gap: 14px;
-      overflow-x: auto;
-      padding-bottom: 10px;
-      margin-bottom: 20px;
-    }
-    .brand-card {
-      min-width: 210px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-top: 3px solid var(--accent, var(--green));
-      border-radius: 10px;
-      padding: 14px;
-      flex-shrink: 0;
-    }
-    .brand-card h3 { font-size: 14px; display: flex; justify-content: space-between; margin-bottom: 10px; }
-    .brand-card .count { font-size: 11px; color: var(--muted); font-weight: 500; }
-    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .metric { background: var(--surface-2); padding: 8px; border-radius: 6px; }
-    .metric label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; }
-    .metric span { font-size: 15px; font-weight: 700; }
-    .seg-split { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: var(--muted); }
-
-    /* Live Sessions Banner */
-    .section-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.4s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-    .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 24px; }
-    .live-card {
-      background: var(--surface);
-      border: 1px solid rgba(17,179,74,0.45);
-      border-radius: 10px;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .live-thumb { width: 100%; height: 140px; object-fit: cover; border-radius: 6px; background: #000; border: 1px solid var(--border); }
-
-    /* Toolbar & Table */
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-    }
-    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
-    input[type="text"], select, input[type="datetime-local"] {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 8px 10px;
-      border-radius: 8px;
-      font-size: 13px;
-    }
-    .date-group { margin-bottom: 18px; }
-    .date-header {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 8px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      overflow: hidden;
-      font-size: 13px;
-    }
-    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-    th { background: var(--surface-2); color: var(--muted); font-size: 11px; text-transform: uppercase; }
-    tr:last-child td { border-bottom: none; }
-    tr:hover td { background: rgba(255,255,255,0.02); }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 600;
-      background: var(--surface-2);
-    }
-    .swatch { width: 8px; height: 8px; border-radius: 50%; }
-    .status-completed { color: #3dd68c; }
-    .status-failed { color: #ff7b7f; }
-    .status-stopped { color: #f5a524; }
-    .status-running { color: #60a5fa; }
-
-    /* Drawer */
-    .drawer-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.65);
-      display: none; justify-content: flex-end; z-index: 40;
-    }
-    .drawer-backdrop.open { display: flex; }
-    .drawer {
-      width: min(560px, 100%);
-      background: var(--surface);
-      border-left: 1px solid var(--border);
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      padding: 20px;
-      overflow-y: auto;
-    }
-    .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-    .drawer img { width: 100%; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 14px; background: #000; }
-    .transcript { display: flex; flex-direction: column; gap: 8px; }
-    .msg { padding: 9px 12px; border-radius: 8px; font-size: 13px; max-width: 90%; }
-    .msg.user { align-self: flex-end; background: rgba(17,179,74,0.2); border: 1px solid rgba(17,179,74,0.4); }
-    .msg.bot, .msg.agent { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); }
-    .msg.agent { border-color: #60a5fa; }
-    .msg.system { align-self: center; font-size: 11px; color: var(--muted); }
-    .msg small { display: block; font-size: 10px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; }
-
-    /* Modals */
-    .modal-backdrop {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
-      display: none; align-items: center; justify-content: center; z-index: 50;
-    }
-    .modal-backdrop.open { display: flex; }
-    .modal {
-      width: min(500px, 94%);
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
-    }
-    .modal h2 { font-size: 16px; margin-bottom: 14px; }
-    .field { margin-bottom: 12px; }
-    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-    .brand-checks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-    .brand-check {
-      display: flex; align-items: center; gap: 8px;
-      background: var(--surface-2); padding: 8px 10px; border-radius: 8px;
-      border: 1px solid var(--border); font-size: 13px; cursor: pointer;
-    }
-    .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-    .sched-item {
-      display: flex; justify-content: space-between; align-items: center;
-      background: var(--surface-2); padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; font-size: 12px;
-    }
-    .empty { color: var(--muted); text-align: center; padding: 36px; background: var(--surface); border-radius: 10px; border: 1px solid var(--border); }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0b0f19; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #334155; }
+    .ticker-text { transition: all 0.2s ease-in-out; }
   </style>
 </head>
-<body>
-  <header>
-    <div class="brand-title">
-      <h1>Comp Chat</h1>
-      <span id="browserStatus" class="pill">Checking Chromium...</span>
-    </div>
-    <div class="actions">
-      <button onclick="openScheduleModal()">Schedules</button>
-      <button onclick="window.location='/api/export'">Export Excel</button>
-      <button class="primary" onclick="openLaunchModal()">+ Run Chat Test</button>
-    </div>
-  </header>
-
-  <main>
-    <div id="cardsRow" class="cards-row"></div>
-
-    <div id="liveSection" style="display:none;">
-      <div class="section-title"><span class="dot"></span> Live Chromium Sessions</div>
-      <div id="liveGrid" class="live-grid"></div>
-    </div>
-
-    <div class="toolbar">
-      <div class="filters">
-        <input id="searchInput" type="text" placeholder="Search transcripts..." oninput="renderHistory()" />
-        <select id="filterBrand" onchange="renderHistory()"><option value="">All Brands</option></select>
-        <select id="filterSegment" onchange="renderHistory()">
-          <option value="">All Segments</option>
-          <option value="Billing">Billing</option>
-          <option value="Sales">Sales</option>
-        </select>
-        <select id="filterLang" onchange="renderHistory()">
-          <option value="">EN + FR</option>
-          <option value="EN">EN</option>
-          <option value="FR">FR</option>
-        </select>
-      </div>
+<body class="bg-[#080b11] text-slate-100 min-h-screen font-sans antialiased selection:bg-indigo-500 selection:text-white" style="background-color: #080b11;">
+  
+  <div class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8 space-y-5">
+    
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b border-slate-800/80 gap-4">
       <div>
-        <button id="bulkDeleteBtn" class="danger sm" style="display:none;" onclick="bulkDelete()">Delete Selected</button>
-      </div>
-    </div>
-
-    <div id="historyContainer"></div>
-  </main>
-
-  <!-- Inspection Drawer -->
-  <div id="drawerBackdrop" class="drawer-backdrop" onclick="if(event.target===this) closeDrawer()">
-    <div class="drawer">
-      <div class="drawer-head">
-        <div>
-          <h2 id="drawerTitle" style="font-size:16px;"></h2>
-          <div id="drawerSub" style="font-size:12px;color:var(--muted);"></div>
+        <div class="flex items-center gap-3">
+          <div class="p-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-indigo-400 shadow-sm shadow-indigo-900/20">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+          </div>
+          <div>
+            <div class="flex items-center gap-3">
+              <h1 class="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2">Comp Chat</h1>
+              <span id="liveClock" class="font-mono text-xs text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">--:--:--</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-0.5">Live web chat navigation, Chromium transcripts, and Time-to-Agent telemetry</p>
+          </div>
         </div>
-        <button class="sm" onclick="closeDrawer()">Close</button>
       </div>
-      <img id="drawerImg" style="display:none;" alt="Chromium Viewport" />
-      <div id="drawerMetrics" class="metric-grid" style="margin-bottom:14px;"></div>
-      <div class="section-title">Transcript</div>
-      <div id="drawerTranscript" class="transcript"></div>
+
+      <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-between md:justify-end">
+        <button onclick="triggerSync()" id="syncBtn" class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800/80 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+          <svg id="syncIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span class="hidden sm:inline">Sync History</span>
+        </button>
+
+        <button onclick="openExportModal()" class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500/50 shadow-lg shadow-indigo-900/20 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          <span>Export</span>
+        </button>
+
+        <button onclick="openNewChatModal()" class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-[#11b34a] hover:bg-[#0e993f] text-white border border-[#11b34a] shadow-lg shadow-emerald-900/20 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+          <span>New Chat</span>
+        </button>
+
+        <button onclick="openBatchModal()" class="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500 shadow-lg shadow-indigo-900/20 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+          <span>Batch Campaign</span>
+        </button>
+
+        <span id="connectionBadge" class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> Connecting
+        </span>
+      </div>
+    </header>
+
+    <main class="space-y-5">
+      
+      <!-- Global Timeframe & Segment Filter Bar -->
+      <div class="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 bg-slate-900/50 p-3 rounded-xl border border-slate-800/80 backdrop-blur-sm">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider px-1">Timeframe:</span>
+          <div class="flex flex-wrap bg-slate-950 border border-slate-800 rounded-lg p-1 text-xs gap-1">
+            <button onclick="setTimeframe('today')" id="tfBtnToday" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition">Today</button>
+            <button onclick="setTimeframe('week')" id="tfBtnWeek" class="px-2.5 py-1 rounded-md bg-indigo-600 text-white font-medium transition">Current Week</button>
+            <button onclick="setTimeframe('7days')" id="tfBtn7days" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition">Last 7 Days</button>
+            <button onclick="setTimeframe('month')" id="tfBtnMonth" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition">This Month</button>
+            <button onclick="setTimeframe('all')" id="tfBtnAll" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition">All Time</button>
+            <button onclick="setTimeframe('custom')" id="tfBtnCustom" class="px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition">Custom</button>
+          </div>
+          <div id="customTimeframeInputs" class="hidden items-center gap-2">
+            <input type="date" id="dashStartDate" onchange="render()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500" style="color-scheme: dark;">
+            <span class="text-slate-500 text-xs">to</span>
+            <input type="date" id="dashEndDate" onchange="render()" class="bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500" style="color-scheme: dark;">
+          </div>
+          <span id="activeRangeLabel" class="text-[11px] font-mono text-slate-400 ml-1"></span>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          <select id="filterSegmentInput" onchange="render()" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition">
+            <option value="">All Segments (Consumer & SMB)</option>
+            <option value="Consumer">Consumer</option>
+            <option value="SMB">SMB (Small Business)</option>
+          </select>
+          <select id="filterBucketInput" onchange="render()" class="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition">
+            <option value="">All Time Slots</option>
+            <option value="9am - 11am">9am - 11am</option>
+            <option value="12pm - 2pm">12pm - 2pm</option>
+            <option value="4pm - 6pm">4pm - 6pm</option>
+            <option value="7pm - 9pm">7pm - 9pm</option>
+          </select>
+          <button onclick="resetAllFilters()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium transition border border-slate-700 shadow-sm">Reset</button>
+        </div>
+      </div>
+
+      <!-- Brand & Segment Overview Tiles -->
+      <section class="space-y-3">
+        <div class="flex items-center justify-between px-1">
+          <div>
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-200">Brand & Segment Overview</h2>
+            <p class="text-[11px] text-slate-400">Avg Time to Agent (sec) for Rogers & Videotron across Consumer & SMB, split by Billing/Care vs. Sales and EN / FR</p>
+          </div>
+          <span id="tileCountBadge" class="text-[11px] font-mono text-slate-400"></span>
+        </div>
+
+        <div id="brandTilesEmpty" class="bg-slate-900/30 border border-slate-800/70 rounded-xl p-8 text-center">
+          <p class="text-xs text-slate-400" id="brandTilesEmptyText">No completed or active chats for Rogers or Videotron in the selected timeframe.</p>
+          <button id="switchAllTimeHintBtn" onclick="setTimeframe('all')" class="hidden mt-3 px-3.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition">
+            View All Historical Chats
+          </button>
+        </div>
+
+        <div id="brandSummaryContainer" class="grid grid-cols-1 md:grid-cols-2 gap-4 hidden"></div>
+      </section>
+
+      <!-- All Raw Chat Data Section -->
+      <section class="space-y-3 pt-1">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1">
+          <div>
+            <h2 class="text-sm font-bold uppercase tracking-wider text-slate-200">All Raw Chat Data</h2>
+            <p class="text-[11px] text-slate-400">Individual chat telemetry, live Chromium screenshots, transcripts, and structured path inspection</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <button onclick="selectOutlierChats()" title="Select visible chats with 0s TTA, missing TTA, or Manual Entry" class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-300 border border-amber-500/30 text-xs font-medium transition">
+              Select 0s / Manual
+            </button>
+            <div class="flex bg-slate-900 border border-slate-800/80 rounded-lg p-1 text-xs">
+              <button onclick="setFilter('all')" id="btnFilterAll" class="px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium transition shadow-sm">All (<span id="countAll">0</span>)</button>
+              <button onclick="setFilter('live')" id="btnFilterLive" class="px-3 py-1.5 rounded-md text-slate-400 hover:text-white transition">Live (<span id="countLive">0</span>)</button>
+              <button onclick="setFilter('scheduled')" id="btnFilterScheduled" class="px-3 py-1.5 rounded-md text-slate-400 hover:text-white transition">Scheduled (<span id="countScheduled">0</span>)</button>
+              <button onclick="setFilter('past')" id="btnFilterPast" class="px-3 py-1.5 rounded-md text-slate-400 hover:text-white transition">Past (<span id="countPast">0</span>)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bulk Delete Bar -->
+        <div id="bulkActionBar" class="hidden items-center justify-between bg-rose-500/10 border border-rose-500/30 rounded-xl px-4 py-2.5 text-xs">
+          <span class="text-rose-200 font-medium"><span id="selectedCountLabel" class="font-mono font-bold">0</span> chat(s) selected</span>
+          <div class="flex items-center gap-2">
+            <button onclick="clearSelectedChats()" class="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">Clear</button>
+            <button onclick="deleteSelectedChats()" id="bulkDeleteBtn" class="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold transition">Delete Selected</button>
+          </div>
+        </div>
+
+        <div class="bg-slate-900/40 rounded-xl border border-slate-800/80 shadow-2xl overflow-hidden w-full backdrop-blur-sm">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs min-w-[740px] lg:min-w-full">
+              <thead class="bg-slate-950/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-800">
+                <tr>
+                  <th class="py-3.5 pl-4 pr-2 w-[3%]">
+                    <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAllVisible(this.checked)" class="rounded border-slate-600 bg-slate-900 text-indigo-500 cursor-pointer" title="Select all visible completed chats">
+                  </th>
+                  <th class="py-3.5 px-4 font-semibold w-[10%]">Status</th>
+                  <th class="py-3.5 px-4 font-semibold w-[18%]">Target</th>
+                  <th class="py-3.5 px-4 font-semibold w-[15%]">Configuration</th>
+                  <th class="py-3.5 px-4 font-semibold w-[12%]">Reported Wait</th>
+                  <th class="py-3.5 px-4 font-semibold w-[12%]">Time to Agent</th>
+                  <th class="py-3.5 px-4 font-semibold w-[12%]">Time</th>
+                  <th class="py-3.5 px-4 font-semibold text-right w-[18%]">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="chatsTableBody" class="divide-y divide-slate-800/60">
+                <tr id="emptyRow">
+                  <td colspan="8" class="py-14 text-center text-slate-500">
+                    <p class="text-sm font-medium">No chats found matching current timeframe and filter.</p>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Export Modal -->
+  <div id="exportModal" class="fixed inset-0 z-50 overflow-hidden hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity" onclick="closeExportModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-700 shadow-2xl rounded-xl w-full max-w-md overflow-hidden">
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-semibold text-white">Export Telemetry</h3>
+            <p class="text-xs text-slate-400 mt-0.5">Export color-coded Excel matrix or raw chat logs for any timeframe.</p>
+          </div>
+          <button onclick="closeExportModal()" class="text-slate-400 hover:text-white"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+        </div>
+
+        <div class="p-5 space-y-4">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">Select Timeframe</label>
+            <select id="exportPresetSelect" onchange="handleExportPresetChange()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="week">Current Week (Mon – Sun)</option>
+              <option value="7days">Last 7 Days</option>
+              <option value="month">Current Month</option>
+              <option value="custom">Custom Date Range...</option>
+              <option value="all">All Available History</option>
+            </select>
+          </div>
+
+          <div id="exportCustomDatesDiv" class="hidden grid-cols-2 gap-3">
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">Start Date</label>
+              <input type="date" id="exportStartDate" onchange="updateExportPreviewCount()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500" style="color-scheme: dark;">
+            </div>
+            <div>
+              <label class="block text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1">End Date</label>
+              <input type="date" id="exportEndDate" onchange="updateExportPreviewCount()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500" style="color-scheme: dark;">
+            </div>
+          </div>
+
+          <div class="bg-slate-950/70 border border-slate-800 rounded-lg p-3 text-xs text-slate-300 flex items-center justify-between">
+            <span>Matching chats in timeframe:</span>
+            <span id="exportMatchCount" class="font-mono font-bold text-indigo-400">0 chats</span>
+          </div>
+
+          <div class="space-y-2.5 pt-1">
+            <button type="button" onclick="downloadStyledExcelMatrix()" id="exportExcelBtn" class="w-full flex items-center justify-between px-4 py-3 bg-[#11b34a] hover:bg-[#0e993f] text-white rounded-lg text-xs font-semibold shadow-lg shadow-emerald-900/20 transition">
+              <span class="flex flex-col text-left">
+                <span>Export Brand × Language Matrix (Excel .xlsx)</span>
+                <span class="text-[10px] font-normal text-emerald-100 mt-0.5">Preserves merged headers, brand color codes, borders & 3-table layout</span>
+              </span>
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            </button>
+
+            <button type="button" onclick="downloadRawCSV()" class="w-full flex items-center justify-between px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition">
+              <span class="flex flex-col text-left">
+                <span>Export Raw Chat Data (CSV)</span>
+                <span class="text-[10px] font-normal text-slate-400 mt-0.5">All individual chat logs & structured fields in timeframe</span>
+              </span>
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Launch Modal -->
-  <div id="launchModal" class="modal-backdrop" onclick="if(event.target===this) closeLaunchModal()">
-    <div class="modal">
-      <h2>Launch Chat Test</h2>
-      <div class="field">
-        <label>Select Carriers</label>
-        <div id="launchBrands" class="brand-checks"></div>
-      </div>
-      <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div>
-          <label>Segment</label>
-          <select id="launchSegment" style="width:100%;">
-            <option value="Billing">Billing</option>
-            <option value="Sales">Sales</option>
-          </select>
+  <!-- New Chat Modal -->
+  <div id="newChatModal" class="fixed inset-0 z-50 overflow-hidden hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity" onclick="closeNewChatModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-700 shadow-2xl rounded-xl w-full max-w-md overflow-hidden transform transition-all">
+        <div class="p-5 border-b border-slate-800">
+          <h3 class="text-lg leading-6 font-semibold text-white">Configure Chat Session</h3>
+          <p class="text-xs text-slate-400 mt-1">Select brand and use-case parameters for Chromium chat automation.</p>
         </div>
-        <div>
-          <label>Language</label>
-          <select id="launchLang" style="width:100%;">
-            <option value="EN">English (EN)</option>
-            <option value="FR">French (FR)</option>
-          </select>
+        <div class="p-5 space-y-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Carrier Brand</label>
+              <select id="brandSelectInput" onchange="autoFillUrl()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="Rogers">Rogers</option>
+                <option value="Videotron">Videotron</option>
+                <option value="Other">Custom / Other</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Segment</label>
+              <select id="segmentSelectInput" onchange="autoFillUrl()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="Consumer">Consumer</option>
+                <option value="Small Business">Small Business (SMB)</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="customBrandNameDiv" class="hidden">
+            <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Custom Brand Name</label>
+            <input type="text" id="customBrandNameInput" placeholder="e.g. Fido, Bell, Freedom..." class="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">AI Use Case</label>
+              <select id="useCaseSelectInput" onchange="autoFillUrl()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="Billing">Billing / Care</option>
+                <option value="Sales">Sales</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">AI Language</label>
+              <select id="languageSelectInput" onchange="autoFillUrl()" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="English">English</option>
+                <option value="French">Français</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Target Chat URL (Auto-filled)</label>
+            <input type="text" id="targetUrlInput" placeholder="https://www.rogers.com/phones" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-xs font-mono text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+          </div>
+          
+          <div class="pt-2 border-t border-slate-800">
+            <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-1.5">Schedule Time Window / Quick-Launch</label>
+            <div class="flex gap-3">
+              <input type="date" id="scheduleDateInput" class="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition" style="color-scheme: dark;">
+              <select id="scheduleBucketInput" onchange="handleBucketChange()" class="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="">Launch Immediately</option>
+                <option value="2min">In 2 Minutes</option>
+                <option value="5min">In 5 Minutes</option>
+                <option value="10min">In 10 Minutes</option>
+                <option value="30min">In 30 Minutes</option>
+                <option value="9,11">9:00 AM - 11:00 AM</option>
+                <option value="12,14">12:00 PM - 2:00 PM</option>
+                <option value="16,18">4:00 PM - 6:00 PM</option>
+                <option value="19,21">7:00 PM - 9:00 PM</option>
+                <option value="custom">Custom Schedule...</option>
+              </select>
+            </div>
+            
+            <div id="customBucketDiv" class="hidden flex-col gap-3 mt-3 p-3 bg-slate-950/90 border border-slate-700/80 rounded-lg">
+              <div class="flex bg-slate-900 p-1 rounded-lg border border-slate-800 text-[11px] font-medium">
+                <button type="button" id="customModeMinutesBtn" onclick="setCustomScheduleMode('minutes')" class="flex-1 py-1 rounded-md bg-indigo-600 text-white transition">Send in X Minutes</button>
+                <button type="button" id="customModeWindowBtn" onclick="setCustomScheduleMode('window')" class="flex-1 py-1 rounded-md text-slate-400 hover:text-white transition">Exact Time / Window</button>
+              </div>
+              <div id="customMinutesPane" class="flex items-center justify-between gap-3">
+                <label class="text-[11px] text-slate-300 font-medium">Dispatch chat in (minutes):</label>
+                <input type="number" id="customMinutesOffset" min="1" max="1440" value="5" class="w-24 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+              </div>
+              <div id="customWindowPane" class="hidden grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Start Time</label>
+                  <input type="time" id="customTimeStart" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500" style="color-scheme: dark;">
+                </div>
+                <div>
+                  <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">End Time (Optional)</label>
+                  <input type="time" id="customTimeEnd" class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500" style="color-scheme: dark;">
+                </div>
+              </div>
+            </div>
+            <p class="text-[10px] text-amber-500/80 mt-2 font-medium">Smart conflict detection will block identical scheduled overlays.</p>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label>Custom URL Override (optional)</label>
-        <input id="launchUrl" type="text" style="width:100%;" placeholder="Leave blank to use default carrier chat URL" />
-      </div>
-      <div class="modal-foot">
-        <button onclick="closeLaunchModal()">Cancel</button>
-        <button class="primary" onclick="startChats()">Start in Chromium</button>
+        <div class="bg-slate-950/50 px-5 py-4 flex justify-end gap-3 border-t border-slate-800">
+          <button type="button" onclick="closeNewChatModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition">Cancel</button>
+          <button type="button" onclick="initiateNewChat()" id="initiateChatBtn" class="flex items-center justify-center min-w-[120px] px-4 py-2 bg-[#11b34a] hover:bg-[#0e993f] text-white rounded-lg text-sm font-medium shadow-lg shadow-emerald-900/20 transition">
+            Dispatch Chat
+          </button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Schedule Modal -->
-  <div id="scheduleModal" class="modal-backdrop" onclick="if(event.target===this) closeScheduleModal()">
-    <div class="modal">
-      <h2>Scheduled Runs</h2>
-      <div class="field">
-        <label>Carriers</label>
-        <div id="schedBrands" class="brand-checks"></div>
-      </div>
-      <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <div>
-          <label>Segment</label>
-          <select id="schedSegment" style="width:100%;"><option>Billing</option><option>Sales</option></select>
+  <!-- Batch Campaign Modal -->
+  <div id="batchModal" class="fixed inset-0 z-50 overflow-hidden hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity" onclick="closeBatchModal()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-700 shadow-2xl rounded-xl w-full max-w-md overflow-hidden transform transition-all">
+        <div class="p-5 border-b border-slate-800">
+          <h3 class="text-lg leading-6 font-semibold text-white">Batch Chat Campaign</h3>
+          <p class="text-xs text-slate-400 mt-1">Schedules all 8 combinations (Consumer/SMB × Sales/Billing × EN/FR).</p>
         </div>
-        <div>
-          <label>Language</label>
-          <select id="schedLang" style="width:100%;"><option>EN</option><option>FR</option></select>
+        <div class="p-5 space-y-5">
+          <div>
+            <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">Carrier Brand</label>
+            <select id="batchBrandSelect" class="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+              <option value="Rogers">Rogers</option>
+              <option value="Videotron">Videotron</option>
+            </select>
+          </div>
+          <div class="pt-2 border-t border-slate-800">
+            <label class="block text-[11px] font-semibold text-slate-300 uppercase tracking-wider mb-2">Campaign Schedule Slot (Optional)</label>
+            <div class="flex gap-3">
+              <input type="date" id="batchDateInput" class="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition" style="color-scheme: dark;">
+              <select id="batchBucketInput" onchange="handleBatchBucketChange()" class="w-1/2 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition">
+                <option value="">Launch Immediately</option>
+                <option value="9,11">9:00 AM - 11:00 AM</option>
+                <option value="12,14">12:00 PM - 2:00 PM</option>
+                <option value="16,18">4:00 PM - 6:00 PM</option>
+                <option value="19,21">7:00 PM - 9:00 PM</option>
+                <option value="custom">Custom Window...</option>
+              </select>
+            </div>
+            <div id="batchCustomBucketDiv" class="hidden gap-3 mt-3 p-3 bg-slate-900 border border-slate-700/60 rounded-lg items-center">
+              <div class="flex-1">
+                <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">Start Hr (0-23)</label>
+                <input type="number" id="batchCustomBucketStart" min="0" max="23" placeholder="9" class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white">
+              </div>
+              <div class="flex-1">
+                <label class="block text-[10px] text-slate-400 uppercase tracking-wider mb-1">End Hr (0-24)</label>
+                <input type="number" id="batchCustomBucketEnd" min="0" max="24" placeholder="11" class="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-slate-950/50 px-5 py-4 flex justify-end gap-3 border-t border-slate-800">
+          <button type="button" onclick="closeBatchModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition">Cancel</button>
+          <button type="button" onclick="initiateBatchCampaign()" id="dispatchBatchBtn" class="flex items-center justify-center min-w-[140px] px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium shadow-lg transition">
+            Launch 8 Combinations
+          </button>
         </div>
       </div>
-      <div class="field">
-        <label>Run Date &amp; Time</label>
-        <input id="schedTime" type="datetime-local" style="width:100%;" />
+    </div>
+  </div>
+
+  <!-- Transcript & Chromium Live Viewport Slide-over Drawer -->
+  <div id="transcriptDrawer" class="fixed inset-0 z-50 overflow-hidden hidden" role="dialog" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-950/70 backdrop-blur-sm transition-opacity" onclick="closeTranscriptDrawer()"></div>
+    <div class="pointer-events-none fixed inset-y-0 right-0 flex max-w-full pl-10">
+      <div class="pointer-events-auto w-screen max-w-md lg:max-w-xl bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col">
+        <div class="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+          <div>
+            <div class="flex items-center gap-2">
+              <span id="drawerLiveBadge" class="hidden items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> Live Chromium
+              </span>
+              <h2 class="text-base font-semibold text-white tracking-tight" id="drawerTitle">Chat Transcript</h2>
+            </div>
+            <p class="text-[10px] text-slate-500 mt-1 font-mono tracking-wider" id="drawerChatIdDisplay">ID: None</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="copyTranscript()" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition" title="Copy Transcript"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg></button>
+            <button onclick="closeTranscriptDrawer()" class="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+          </div>
+        </div>
+        <!-- Live Chromium Viewport Preview -->
+        <div id="drawerScreenshotWrap" class="hidden p-4 border-b border-slate-800 bg-slate-950/70">
+          <img id="drawerScreenshotImg" class="w-full rounded-lg border border-slate-700/80 shadow-lg bg-black" alt="Chromium Viewport" />
+        </div>
+        <div id="transcriptFeed" class="flex-1 p-5 overflow-y-auto space-y-3.5 bg-slate-900/60 font-sans text-xs"></div>
+        <div class="p-4 border-t border-slate-800/80 bg-slate-950/60 flex items-center justify-between text-xs text-slate-400">
+          <span id="drawerStats">0 messages</span>
+          <span class="text-[11px] text-slate-500">Auto-updates live</span>
+        </div>
       </div>
-      <div id="schedWarning" style="color:#f5a524;font-size:12px;margin-bottom:8px;"></div>
-      <button class="primary sm" onclick="createSchedule(false)">Add Schedule</button>
-      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
-      <div id="schedList"></div>
-      <div class="modal-foot"><button onclick="closeScheduleModal()">Done</button></div>
     </div>
   </div>
 
   <script>
-    let brands = [];
-    let activeChats = [];
-    let historyChats = [];
-    let selectedIds = new Set();
-    let inspectedId = null;
+    const BRAND_URLS = {
+      "Rogers": {
+        "Consumer": {
+          "English": { Billing: "https://www.rogers.com/support", Sales: "https://www.rogers.com/phones" },
+          "French":  { Billing: "https://www.rogers.com/support?setLanguage=fr", Sales: "https://www.rogers.com/phones?setLanguage=fr" }
+        },
+        "Small Business": {
+          "English": { Billing: "https://www.rogers.com/business/support", Sales: "https://www.rogers.com/business/wireless/devices" },
+          "French":  { Billing: "https://www.rogers.com/business/support?setLanguage=fr", Sales: "https://www.rogers.com/business/wireless/devices?setLanguage=fr" }
+        }
+      },
+      "Videotron": {
+        "Consumer": {
+          "English": { Billing: "https://www.videotron.com/en/support/mobile", Sales: "https://www.videotron.com/en/mobile/cell-phones" },
+          "French":  { Billing: "https://www.videotron.com/soutien/mobilite", Sales: "https://www.videotron.com/mobilite/telephones-mobiles" }
+        },
+        "Small Business": {
+          "English": { Billing: "https://www.videotron.com/business/support", Sales: "https://www.videotron.com/business/mobile/cell-phones" },
+          "French":  { Billing: "https://www.videotron.com/affaires/soutien", Sales: "https://www.videotron.com/affaires/mobilite/telephones-mobiles" }
+        }
+      }
+    };
 
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    const fmtSec = (v) => (v === null || v === undefined ? '—' : `${v}s`);
+    const BRAND_ACCENTS = {
+      'Rogers': '#DA291C',
+      'Videotron': '#FACC15'
+    };
 
-    async function init() {
-      const cfg = await fetch('/api/config').then((r) => r.json());
-      brands = cfg.brands;
+    function resolveChatUrl(brand, segment, useCase, language) {
+      return BRAND_URLS[brand]?.[segment]?.[language]?.[useCase] || '';
+    }
 
-      const statusEl = document.getElementById('browserStatus');
-      statusEl.textContent = cfg.browserConfigured ? 'Chromium Connected' : 'Set BROWSER_WS_ENDPOINT';
-      statusEl.className = 'pill ' + (cfg.browserConfigured ? 'ok' : 'warn');
+    const chats = new Map();
+    const tableBody = document.getElementById('chatsTableBody');
+    const emptyRow = document.getElementById('emptyRow');
+    const connectionBadge = document.getElementById('connectionBadge');
+    const brandSummaryContainer = document.getElementById('brandSummaryContainer');
+    const brandTilesEmpty = document.getElementById('brandTilesEmpty');
 
-      const filterBrand = document.getElementById('filterBrand');
-      const launchBrands = document.getElementById('launchBrands');
-      const schedBrands = document.getElementById('schedBrands');
+    const expandedRows = new Set();
+    const terminatingChats = new Set();
+    const selectedChatIds = new Set();
+    let lastVisiblePastChats = [];
+    let currentFilter = 'all';
+    let currentTimeframe = 'week';
+    let activeTranscriptChatId = null;
+    let customScheduleMode = 'minutes';
+    let browserConfigured = true;
 
-      brands.forEach((b) => {
-        filterBrand.innerHTML += `<option value="${b.id}">${esc(b.name)}</option>`;
-        const chk = `
-          <label class="brand-check">
-            <input type="checkbox" value="${b.id}" />
-            <span class="swatch" style="background:${b.color}"></span>
-            ${esc(b.name)}
-          </label>`;
-        launchBrands.innerHTML += chk;
-        schedBrands.innerHTML += chk;
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        browserConfigured = Boolean(cfg.browserConfigured);
+        updateConnectionBadge(ws && ws.readyState === 1);
+      })
+      .catch(() => {});
+
+    function updateConnectionBadge(wsOpen) {
+      if (!wsOpen) {
+        connectionBadge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20';
+        connectionBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> Reconnecting...';
+      } else if (!browserConfigured) {
+        connectionBadge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20';
+        connectionBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span> Set BROWSER_WS_ENDPOINT';
+      } else {
+        connectionBadge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        connectionBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Chromium Connected';
+      }
+    }
+
+    function updateClock() {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+      const dateStr = now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      document.getElementById('liveClock').textContent = `${dateStr} • ${timeStr}`;
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function toLocalYMD(d) {
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    function escHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    function getPresetBounds(preset, customStartVal, customEndVal) {
+      const now = new Date();
+      if (preset === 'all') return { start: null, end: null, label: 'All Time' };
+      if (preset === 'today') {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        const fmt = (dt) => dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return { start, end, label: fmt(start) };
+      }
+      if (preset === 'week') {
+        const day = now.getDay();
+        const diffToMon = day === 0 ? -6 : 1 - day;
+        const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMon, 0, 0, 0, 0);
+        const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6, 23, 59, 59, 999);
+        const fmt = (dt) => dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return { start: mon, end: sun, label: `${fmt(mon)} – ${fmt(sun)}` };
+      }
+      if (preset === '7days') {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
+        const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        const fmt = (dt) => dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
+      }
+      if (preset === 'month') {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const fmt = (dt) => dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        return { start, end, label: `${fmt(start)} – ${fmt(end)}` };
+      }
+      if (preset === 'custom') {
+        let start = null, end = null;
+        if (customStartVal) {
+          const [y, m, d] = customStartVal.split('-').map(Number);
+          start = new Date(y, m - 1, d, 0, 0, 0, 0);
+        }
+        if (customEndVal) {
+          const [y, m, d] = customEndVal.split('-').map(Number);
+          end = new Date(y, m - 1, d, 23, 59, 59, 999);
+        }
+        return { start, end, label: `${customStartVal || '...'} to ${customEndVal || '...'}` };
+      }
+      return { start: null, end: null, label: '' };
+    }
+
+    function setTimeframe(tf) {
+      currentTimeframe = tf;
+      ['today', 'week', '7days', 'month', 'all', 'custom'].forEach(k => {
+        const btn = document.getElementById('tfBtn' + k.charAt(0).toUpperCase() + k.slice(1));
+        if (btn) {
+          btn.className = k === tf
+            ? 'px-2.5 py-1 rounded-md bg-indigo-600 text-white font-medium transition'
+            : 'px-2.5 py-1 rounded-md text-slate-400 hover:text-white transition';
+        }
       });
-
-      await refresh();
-      setInterval(refresh, 3000);
+      const customDiv = document.getElementById('customTimeframeInputs');
+      if (tf === 'custom') {
+        customDiv.classList.remove('hidden');
+        customDiv.classList.add('flex');
+        if (!document.getElementById('dashStartDate').value) {
+          const wk = getPresetBounds('week');
+          document.getElementById('dashStartDate').value = toLocalYMD(wk.start);
+          document.getElementById('dashEndDate').value = toLocalYMD(wk.end);
+        }
+      } else {
+        customDiv.classList.add('hidden');
+        customDiv.classList.remove('flex');
+      }
+      render();
     }
 
-    async function refresh() {
-      const data = await fetch('/api/chats').then((r) => r.json());
-      activeChats = data.active || [];
-      historyChats = data.history || [];
-      renderCards();
-      renderLive();
-      renderHistory();
-      if (inspectedId) renderDrawer();
+    function resetAllFilters() {
+      document.getElementById('filterSegmentInput').value = '';
+      document.getElementById('filterBucketInput').value = '';
+      setTimeframe('week');
     }
 
-    function avg(arr) {
-      const valid = arr.filter((v) => typeof v === 'number');
-      return valid.length ? `${(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1)}s` : '—';
+    function parseToSec(val) {
+      if (val === null || val === undefined) return null;
+      if (typeof val === 'number' && !isNaN(val)) return Math.round(val);
+      let s = String(val).toLowerCase().trim();
+      if (!s || ['—', '-', 'none', 'n/a', 'pending...', 'unknown', 'null', 'undefined'].includes(s)) return null;
+      const hms = s.match(/^(\d+):(\d+):(\d+)$/);
+      if (hms) return parseInt(hms[1], 10) * 3600 + parseInt(hms[2], 10) * 60 + parseInt(hms[3], 10);
+      const ms = s.match(/^(\d+):(\d+)$/);
+      if (ms) return parseInt(ms[1], 10) * 60 + parseInt(ms[2], 10);
+      let secs = 0, found = false;
+      const hrMatch = s.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/);
+      if (hrMatch) { secs += parseFloat(hrMatch[1]) * 3600; found = true; }
+      const minMatch = s.match(/(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)\b/);
+      if (minMatch) { secs += parseFloat(minMatch[1]) * 60; found = true; }
+      const secMatch = s.match(/(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/);
+      if (secMatch) { secs += parseFloat(secMatch[1]); found = true; }
+      if (found) return Math.round(secs);
+      const numMatch = s.match(/^(\d+(?:\.\d+)?)$/);
+      if (numMatch) return Math.round(parseFloat(numMatch[1]));
+      return null;
     }
 
-    function renderCards() {
-      const row = document.getElementById('cardsRow');
-      row.innerHTML = brands.map((b) => {
-        const logs = historyChats.filter((c) => c.brandId === b.id);
-        const billingWait = avg(logs.filter((c) => c.segment === 'Billing').map((c) => c.agentWaitSec));
-        const salesWait = avg(logs.filter((c) => c.segment === 'Sales').map((c) => c.agentWaitSec));
-        return `
-          <div class="brand-card" style="--accent:${b.color}">
-            <h3><span>${esc(b.name)}</span><span class="count">${logs.length} runs</span></h3>
-            <div class="metric-grid">
-              <div class="metric"><label>Bot Reply</label><span>${avg(logs.map((c) => c.botResponseSec))}</span></div>
-              <div class="metric"><label>Agent Wait</label><span>${avg(logs.map((c) => c.agentWaitSec))}</span></div>
-            </div>
-            <div class="seg-split">
-              <span>Billing: <b>${billingWait}</b></span>
-              <span>Sales: <b>${salesWait}</b></span>
-            </div>
-          </div>`;
-      }).join('');
+    function getAdjustedTTASec(structuredOutputs) {
+      const s = structuredOutputs || {};
+      const ttaSec = parseToSec(s.timeToAgent);
+      if (ttaSec === null) return null;
+      const waitSec = parseToSec(s.waitTimes);
+      if (waitSec !== null && waitSec > ttaSec && !String(s.waitTimes || '').startsWith('Bot:')) {
+        return ttaSec + waitSec;
+      }
+      return ttaSec;
     }
 
-    function renderLive() {
-      const sec = document.getElementById('liveSection');
-      const grid = document.getElementById('liveGrid');
-      if (!activeChats.length) {
-        sec.style.display = 'none';
+    function formatSecDisplay(seconds) {
+      if (seconds === null || seconds === undefined || isNaN(seconds)) return '—';
+      return `${Math.round(seconds)}s`;
+    }
+
+    function normalizeBrand(rawBrand) {
+      if (!rawBrand) return null;
+      const b = String(rawBrand).trim();
+      if (!b || b === '—' || b === '-') return null;
+      const lower = b.toLowerCase();
+      if (['unknown', 'manual entry', 'pending...'].includes(lower)) return null;
+      const aliases = {
+        'rogers': 'Rogers',
+        'videotron': 'Videotron',
+        'vidéotron': 'Videotron'
+      };
+      return aliases[lower] || b;
+    }
+
+    function normalizeSegment(rawSeg) {
+      if (!rawSeg) return 'Consumer';
+      const s = String(rawSeg).trim().toLowerCase();
+      if (s.includes('business') || s.includes('smb') || s.includes('commercial')) return 'SMB';
+      return 'Consumer';
+    }
+
+    function normalizeLanguage(rawLang) {
+      if (!rawLang) return 'EN';
+      const l = String(rawLang).trim().toLowerCase();
+      if (l.startsWith('fr') || l.includes('français') || l.includes('french')) return 'FR';
+      return 'EN';
+    }
+
+    function normalizeUseCase(rawUseCase) {
+      if (!rawUseCase) return 'Billing';
+      const u = String(rawUseCase).trim().toLowerCase();
+      if (u.includes('sale')) return 'Sales';
+      if (u.includes('bill') || u.includes('care') || u.includes('support')) return 'Billing';
+      return String(rawUseCase).trim();
+    }
+
+    function formatTimeBucketString(bucketVal) {
+      if (!bucketVal) return 'Unknown';
+      const parts = String(bucketVal).split(',');
+      if (parts.length !== 2 || isNaN(parseInt(parts[0], 10)) || String(bucketVal).includes(':')) return bucketVal;
+      const formatHr = (h) => {
+        const hr = parseInt(h, 10);
+        if (hr === 0 || hr === 24) return '12am';
+        if (hr === 12) return '12pm';
+        return hr > 12 ? `${hr - 12}pm` : `${hr}am`;
+      };
+      return `${formatHr(parts[0])} - ${formatHr(parts[1])}`;
+    }
+
+    function getTimeSlot(dateString) {
+      if (!dateString) return 'Off-Peak';
+      const d = new Date(dateString);
+      const h = d.getHours();
+      if (h >= 9 && h < 11) return '9am - 11am';
+      if (h >= 12 && h < 14) return '12pm - 2pm';
+      if (h >= 16 && h < 18) return '4pm - 6pm';
+      if (h >= 19 && h < 21) return '7pm - 9pm';
+      const formatHr = (hr) => {
+        if (hr === 0 || hr === 24) return '12am';
+        if (hr === 12) return '12pm';
+        return hr > 12 ? `${hr - 12}pm` : `${hr}am`;
+      };
+      return `${formatHr(h)} - ${formatHr(h + 1)}`;
+    }
+
+    function autoFillUrl() {
+      const brand = document.getElementById('brandSelectInput').value;
+      const segment = document.getElementById('segmentSelectInput').value;
+      const useCase = document.getElementById('useCaseSelectInput').value;
+      const language = document.getElementById('languageSelectInput').value;
+      const targetInput = document.getElementById('targetUrlInput');
+      const customBrandDiv = document.getElementById('customBrandNameDiv');
+      if (brand === 'Other') {
+        customBrandDiv.classList.remove('hidden');
+        targetInput.value = '';
+        targetInput.placeholder = 'Enter target chat page URL...';
+      } else {
+        customBrandDiv.classList.add('hidden');
+        targetInput.value = resolveChatUrl(brand, segment, useCase, language);
+      }
+    }
+
+    function setCustomScheduleMode(mode) {
+      customScheduleMode = mode;
+      const minBtn = document.getElementById('customModeMinutesBtn');
+      const winBtn = document.getElementById('customModeWindowBtn');
+      const minPane = document.getElementById('customMinutesPane');
+      const winPane = document.getElementById('customWindowPane');
+      if (mode === 'minutes') {
+        minBtn.className = 'flex-1 py-1 rounded-md bg-indigo-600 text-white transition';
+        winBtn.className = 'flex-1 py-1 rounded-md text-slate-400 hover:text-white transition';
+        minPane.classList.remove('hidden'); minPane.classList.add('flex');
+        winPane.classList.add('hidden'); winPane.classList.remove('grid');
+      } else {
+        winBtn.className = 'flex-1 py-1 rounded-md bg-indigo-600 text-white transition';
+        minBtn.className = 'flex-1 py-1 rounded-md text-slate-400 hover:text-white transition';
+        minPane.classList.add('hidden'); minPane.classList.remove('flex');
+        winPane.classList.remove('hidden'); winPane.classList.add('grid');
+      }
+    }
+
+    function handleBucketChange() {
+      const val = document.getElementById('scheduleBucketInput').value;
+      const customDiv = document.getElementById('customBucketDiv');
+      const dateInput = document.getElementById('scheduleDateInput');
+      if (['2min', '5min', '10min', '30min'].includes(val)) {
+        customDiv.classList.add('hidden'); customDiv.classList.remove('flex');
+        dateInput.value = toLocalYMD(new Date());
+        dateInput.disabled = true;
+      } else if (val === 'custom') {
+        customDiv.classList.remove('hidden'); customDiv.classList.add('flex');
+        if (!dateInput.value) dateInput.value = toLocalYMD(new Date());
+        dateInput.disabled = false;
+      } else {
+        customDiv.classList.add('hidden'); customDiv.classList.remove('flex');
+        if (val && !dateInput.value) dateInput.value = toLocalYMD(new Date());
+        dateInput.disabled = false;
+      }
+    }
+
+    // WebSocket Live State
+    let ws;
+    let reconnectTimeout;
+    function connectWebSocket() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${window.location.host}`);
+      ws.onopen = () => {
+        updateConnectionBadge(true);
+        clearTimeout(reconnectTimeout);
+      };
+      ws.onclose = () => {
+        updateConnectionBadge(false);
+        clearTimeout(reconnectTimeout);
+        reconnectTimeout = setTimeout(connectWebSocket, 3000);
+      };
+      ws.onerror = () => ws.close();
+      ws.onmessage = (event) => {
+        const { event: evtType, data } = JSON.parse(event.data);
+        if (evtType === 'INIT_STATE') {
+          chats.clear();
+          data.forEach(c => chats.set(c.id, c));
+        } else if (evtType === 'CHAT_UPDATED') {
+          chats.set(data.id, data);
+          if (terminatingChats.has(data.id) && data.status === 'ended') terminatingChats.delete(data.id);
+          if (activeTranscriptChatId === data.id) renderTranscriptFeed(data);
+        } else if (evtType === 'CHAT_DELETED') {
+          chats.delete(data.id);
+          selectedChatIds.delete(data.id);
+        } else if (evtType === 'CHATS_BULK_DELETED') {
+          (data.ids || []).forEach(id => {
+            chats.delete(id);
+            selectedChatIds.delete(id);
+          });
+        } else if (evtType === 'TRANSCRIPT_UPDATE') {
+          const c = chats.get(data.chatId);
+          if (c) {
+            c.transcript = c.transcript || [];
+            c.transcript.push(data.segment);
+            if (activeTranscriptChatId === data.chatId) renderTranscriptFeed(c);
+          }
+        }
+        render();
+      };
+    }
+    connectWebSocket();
+
+    async function triggerSync() {
+      const btn = document.getElementById('syncBtn');
+      const icon = document.getElementById('syncIcon');
+      icon.classList.add('animate-spin');
+      btn.disabled = true;
+      try { await fetch('/api/sync-history'); } catch (e) {}
+      finally { icon.classList.remove('animate-spin'); btn.disabled = false; }
+    }
+
+    function toggleRow(id) {
+      expandedRows.has(id) ? expandedRows.delete(id) : expandedRows.add(id);
+      render();
+    }
+
+    function openTranscript(id, e) {
+      if (e) e.stopPropagation();
+      activeTranscriptChatId = id;
+      const c = chats.get(id);
+      if (!c) return;
+      renderTranscriptFeed(c);
+      document.getElementById('transcriptDrawer').classList.remove('hidden');
+    }
+
+    function closeTranscriptDrawer() {
+      activeTranscriptChatId = null;
+      document.getElementById('transcriptDrawer').classList.add('hidden');
+    }
+
+    function copyTranscript() {
+      const c = chats.get(activeTranscriptChatId);
+      if (c && c.transcript) {
+        const cleanSegments = c.transcript.filter(s => s.role !== 'system');
+        const brandName = normalizeBrand(c.structuredOutputs?.brand) || 'Chat';
+        const formattedText = cleanSegments.map(s => {
+          const isOurAI = s.role === 'assistant' || s.role === 'bot';
+          const label = isOurAI ? 'AI AGENT' : brandName.toUpperCase();
+          return `[${label}]: ${s.text}`;
+        }).join('\n\n');
+        navigator.clipboard.writeText(formattedText).then(() => alert('Copied!'));
+      }
+    }
+
+    function renderTranscriptFeed(chat) {
+      const isLive = ['in-progress', 'queued'].includes(chat.status);
+      document.getElementById('drawerLiveBadge').style.display = isLive ? 'inline-flex' : 'none';
+      document.getElementById('drawerTitle').textContent = `${normalizeBrand(chat.structuredOutputs?.brand) || 'Carrier'} Chat Transcript`;
+      document.getElementById('drawerChatIdDisplay').textContent = `Chat ID: ${chat.id}`;
+
+      const shotWrap = document.getElementById('drawerScreenshotWrap');
+      const shotImg = document.getElementById('drawerScreenshotImg');
+      if (chat.lastScreenshot) {
+        shotImg.src = chat.lastScreenshot;
+        shotWrap.classList.remove('hidden');
+      } else {
+        shotWrap.classList.add('hidden');
+      }
+
+      const feed = document.getElementById('transcriptFeed');
+      const segments = chat.transcript || [];
+      const nonSystemCount = segments.filter(s => s.role !== 'system').length;
+      document.getElementById('drawerStats').textContent = `${nonSystemCount} message${nonSystemCount === 1 ? '' : 's'}`;
+
+      if (segments.length === 0) {
+        feed.innerHTML = `<div class="text-center py-12 text-slate-500">No chat events captured yet.<br><span class="text-[11px] text-slate-600">Messages and Chromium steps will stream here live.</span></div>`;
         return;
       }
-      sec.style.display = 'block';
-      grid.innerHTML = activeChats.map((c) => `
-        <div class="live-card">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span class="badge"><span class="swatch" style="background:${c.brandColor}"></span>${esc(c.brandName)} • ${c.segment} (${c.language})</span>
-            <span style="font-size:12px;color:var(--muted);">${c.totalDurationSec}s</span>
-          </div>
-          ${c.lastScreenshot ? `<img class="live-thumb" src="${c.lastScreenshot}" />` : '<div class="live-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;">Waiting for frame...</div>'}
-          <div style="font-size:12px;color:var(--muted);">${esc(c.step)}</div>
-          <div style="display:flex;gap:8px;justify-content:flex-end;">
-            <button class="sm" onclick="inspectSession('${c.id}')">Inspect Live</button>
-            <button class="danger sm" onclick="stopChat('${c.id}')">Stop</button>
-          </div>
-        </div>
-      `).join('');
+
+      const brandName = normalizeBrand(chat.structuredOutputs?.brand) || 'Carrier Chat';
+      feed.innerHTML = segments.map(seg => {
+        if (seg.role === 'system') {
+          return `<div class="text-center text-[11px] font-mono text-slate-400 bg-slate-950/60 border border-slate-800/80 rounded-lg py-1.5 px-3">${escHtml(seg.text)}</div>`;
+        }
+        const isOurAI = seg.role === 'assistant' || seg.role === 'bot';
+        return `
+          <div class="flex flex-col ${isOurAI ? 'items-end ml-8' : 'items-start mr-8'} space-y-1">
+            <span class="text-[10px] uppercase font-semibold ${isOurAI ? 'text-indigo-400' : 'text-slate-400'} tracking-wider px-1">${isOurAI ? 'AI Agent' : escHtml(brandName)}</span>
+            <div class="p-3 rounded-2xl ${!isOurAI ? 'bg-slate-800/90 text-slate-200 border border-slate-700/70' : 'bg-indigo-600/20 text-indigo-200 border border-indigo-500/30'} leading-relaxed max-w-full break-words">${escHtml(seg.text)}</div>
+          </div>`;
+      }).join('');
+      feed.scrollTop = feed.scrollHeight;
     }
 
-    function renderHistory() {
-      const q = document.getElementById('searchInput').value.toLowerCase();
-      const brand = document.getElementById('filterBrand').value;
-      const seg = document.getElementById('filterSegment').value;
-      const lang = document.getElementById('filterLang').value;
+    // Selection & Deletion Helpers
+    function updateBulkBar() {
+      const bar = document.getElementById('bulkActionBar');
+      const label = document.getElementById('selectedCountLabel');
+      const selectAll = document.getElementById('selectAllCheckbox');
+      if (selectedChatIds.size > 0) {
+        bar.classList.remove('hidden'); bar.classList.add('flex');
+        label.textContent = selectedChatIds.size;
+      } else {
+        bar.classList.add('hidden'); bar.classList.remove('flex');
+      }
+      if (selectAll) {
+        selectAll.checked = lastVisiblePastChats.length > 0 && lastVisiblePastChats.every(c => selectedChatIds.has(c.id));
+      }
+    }
 
-      const filtered = historyChats.filter((c) => {
-        if (brand && c.brandId !== brand) return false;
-        if (seg && c.segment !== seg) return false;
-        if (lang && c.language !== lang) return false;
-        if (q) {
-          const blob = (c.brandName + ' ' + c.transcript.map((m) => m.text).join(' ')).toLowerCase();
-          if (!blob.includes(q)) return false;
+    function toggleSelectChat(id, checked) {
+      checked ? selectedChatIds.add(id) : selectedChatIds.delete(id);
+      updateBulkBar();
+    }
+
+    function toggleSelectAllVisible(checked) {
+      lastVisiblePastChats.forEach(c => checked ? selectedChatIds.add(c.id) : selectedChatIds.delete(c.id));
+      render();
+    }
+
+    function selectOutlierChats() {
+      let matched = 0;
+      lastVisiblePastChats.forEach(c => {
+        const s = c.structuredOutputs || {};
+        const brand = normalizeBrand(s.brand);
+        const tta = parseToSec(s.timeToAgent);
+        if (!brand || tta === null || tta === 0) {
+          selectedChatIds.add(c.id);
+          matched++;
+        }
+      });
+      if (matched === 0) alert('No 0s, blank TTA, or Manual Entry chats found in the current view.');
+      render();
+    }
+
+    function clearSelectedChats() {
+      selectedChatIds.clear();
+      render();
+    }
+
+    async function deleteChat(id, e) {
+      if (e) e.stopPropagation();
+      if (!confirm('Delete this chat from logs, dashboard averages, and exports?')) return;
+      try {
+        const res = await fetch(`/api/chats/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (res.ok) {
+          chats.delete(id);
+          selectedChatIds.delete(id);
+          render();
+        } else alert('Failed to delete chat.');
+      } catch (err) { alert('Connection error.'); }
+    }
+
+    async function deleteSelectedChats() {
+      const ids = Array.from(selectedChatIds);
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} selected chat(s) from logs, dashboard averages, and exports?`)) return;
+      const btn = document.getElementById('bulkDeleteBtn');
+      btn.disabled = true; btn.textContent = 'Deleting...';
+      try {
+        const res = await fetch('/api/chats/bulk-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids })
+        });
+        if (res.ok) {
+          ids.forEach(id => chats.delete(id));
+          selectedChatIds.clear();
+          render();
+        } else alert('Failed to delete selected chats.');
+      } catch (err) { alert('Connection error.'); }
+      finally { btn.disabled = false; btn.textContent = 'Delete Selected'; }
+    }
+
+    function render() {
+      const allChatsSorted = Array.from(chats.values()).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+      const dashStart = document.getElementById('dashStartDate').value;
+      const dashEnd = document.getElementById('dashEndDate').value;
+      const bounds = getPresetBounds(currentTimeframe, dashStart, dashEnd);
+      document.getElementById('activeRangeLabel').textContent = bounds.label ? `(${bounds.label})` : '';
+
+      const segmentFilterVal = document.getElementById('filterSegmentInput').value;
+      const bucketFilterVal = document.getElementById('filterBucketInput').value;
+
+      const timeframeChats = allChatsSorted.filter(c => {
+        const cTime = new Date(c.startedAt).getTime();
+        if (bounds.start && cTime < bounds.start.getTime()) return false;
+        if (bounds.end && cTime > bounds.end.getTime()) return false;
+        if (segmentFilterVal && normalizeSegment(c.structuredOutputs?.segment) !== segmentFilterVal) return false;
+        if (bucketFilterVal) {
+          const slot = c.status === 'scheduled' ? formatTimeBucketString(c.bucket) : getTimeSlot(c.startedAt);
+          if (slot !== bucketFilterVal) return false;
         }
         return true;
       });
 
-      const container = document.getElementById('historyContainer');
-      if (!filtered.length) {
-        container.innerHTML = '<div class="empty">No chat logs yet. Click <b>+ Run Chat Test</b> to launch your first session.</div>';
-        return;
-      }
+      // 1. Brand Matrix Tiles (Rogers & Videotron)
+      const tilesMap = new Map();
+      const allowedBrands = ['Rogers', 'Videotron'];
 
-      const groups = {};
-      filtered.forEach((c) => {
-        const day = c.startedAt.slice(0, 10);
-        (groups[day] = groups[day] || []).push(c);
+      timeframeChats.forEach(c => {
+        if (c.status === 'scheduled') return;
+        const s = c.structuredOutputs || {};
+        const brand = normalizeBrand(s.brand);
+        if (!brand || !allowedBrands.includes(brand)) return;
+
+        const segment = normalizeSegment(s.segment);
+        const lang = normalizeLanguage(s.language);
+        const useCase = normalizeUseCase(s.useCase);
+        const isBilling = useCase !== 'Sales';
+
+        if (!tilesMap.has(brand)) {
+          tilesMap.set(brand, {
+            brand,
+            cEnBill: [], cEnSales: [], cFrBill: [], cFrSales: [],
+            sEnBill: [], sEnSales: [], sFrBill: [], sFrSales: [],
+            cCount: 0, sCount: 0, totalChats: 0,
+            isLive: false, latestLiveChat: null
+          });
+        }
+        const tile = tilesMap.get(brand);
+        tile.totalChats++;
+        if (segment === 'Consumer') tile.cCount++;
+        else tile.sCount++;
+
+        if (['in-progress', 'queued'].includes(c.status)) {
+          tile.isLive = true;
+          if (!tile.latestLiveChat) tile.latestLiveChat = c;
+        }
+
+        const ttaSec = parseToSec(s.timeToAgent);
+        if (ttaSec !== null) {
+          if (segment === 'Consumer') {
+            if (lang === 'FR') (isBilling ? tile.cFrBill : tile.cFrSales).push(ttaSec);
+            else (isBilling ? tile.cEnBill : tile.cEnSales).push(ttaSec);
+          } else {
+            if (lang === 'FR') (isBilling ? tile.sFrBill : tile.sFrSales).push(ttaSec);
+            else (isBilling ? tile.sEnBill : tile.sEnSales).push(ttaSec);
+          }
+        }
       });
 
-      container.innerHTML = Object.entries(groups).map(([day, rows]) => `
-        <div class="date-group">
-          <div class="date-header">${day} (${rows.length})</div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width:32px;"></th>
-                <th>Time</th>
-                <th>Brand</th>
-                <th>Segment</th>
-                <th>Lang</th>
-                <th>Status</th>
-                <th>Bot Reply</th>
-                <th>Agent Wait</th>
-                <th>Total</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map((c) => `
-                <tr>
-                  <td><input type="checkbox" ${selectedIds.has(c.id) ? 'checked' : ''} onchange="toggleSelect('${c.id}', this.checked)" /></td>
-                  <td>${new Date(c.startedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
-                  <td><span class="badge"><span class="swatch" style="background:${c.brandColor}"></span>${esc(c.brandName)}</span></td>
-                  <td>${esc(c.segment)}</td>
-                  <td>${esc(c.language)}</td>
-                  <td class="status-${c.status}">${esc(c.status)}</td>
-                  <td>${fmtSec(c.botResponseSec)}</td>
-                  <td>${fmtSec(c.agentWaitSec)}</td>
-                  <td>${fmtSec(c.totalDurationSec)}</td>
-                  <td style="text-align:right;"><button class="sm" onclick="inspectSession('${c.id}')">Inspect</button></td>
-                </tr>`).join('')}
-            </tbody>
-          </table>
-        </div>`).join('');
-
-      document.getElementById('bulkDeleteBtn').style.display = selectedIds.size ? 'inline-block' : 'none';
-    }
-
-    function toggleSelect(id, checked) {
-      checked ? selectedIds.add(id) : selectedIds.delete(id);
-      document.getElementById('bulkDeleteBtn').style.display = selectedIds.size ? 'inline-block' : 'none';
-    }
-
-    async function bulkDelete() {
-      if (!confirm(`Delete ${selectedIds.size} selected chat log(s)?`)) return;
-      await fetch('/api/chats', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: Array.from(selectedIds) })
-      });
-      selectedIds.clear();
-      refresh();
-    }
-
-    function inspectSession(id) {
-      inspectedId = id;
-      document.getElementById('drawerBackdrop').classList.add('open');
-      renderDrawer();
-    }
-
-    function closeDrawer() {
-      inspectedId = null;
-      document.getElementById('drawerBackdrop').classList.remove('open');
-    }
-
-    function renderDrawer() {
-      const c = activeChats.find((x) => x.id === inspectedId) || historyChats.find((x) => x.id === inspectedId);
-      if (!c) return;
-      document.getElementById('drawerTitle').textContent = `${c.brandName} — ${c.segment} (${c.language})`;
-      document.getElementById('drawerSub').textContent = `${c.status.toUpperCase()} • ${c.step || ''} • ${new Date(c.startedAt).toLocaleString()}`;
-
-      const img = document.getElementById('drawerImg');
-      if (c.lastScreenshot) {
-        img.src = c.lastScreenshot;
-        img.style.display = 'block';
+      if (tilesMap.size === 0) {
+        brandSummaryContainer.innerHTML = '';
+        brandSummaryContainer.classList.add('hidden');
+        brandTilesEmpty.classList.remove('hidden');
+        document.getElementById('tileCountBadge').textContent = '0 brands';
+        const hintBtn = document.getElementById('switchAllTimeHintBtn');
+        if (currentTimeframe !== 'all' && allChatsSorted.some(c => c.status !== 'scheduled')) {
+          hintBtn.classList.remove('hidden');
+          hintBtn.textContent = `View All Historical Chats (${allChatsSorted.filter(c => c.status !== 'scheduled').length})`;
+        } else {
+          hintBtn.classList.add('hidden');
+        }
       } else {
-        img.style.display = 'none';
+        brandTilesEmpty.classList.add('hidden');
+        brandSummaryContainer.classList.remove('hidden');
+
+        const sortedTiles = allowedBrands.filter(b => tilesMap.has(b)).map(b => tilesMap.get(b));
+        document.getElementById('tileCountBadge').textContent = `${sortedTiles.length} brand${sortedTiles.length === 1 ? '' : 's'}`;
+
+        const avgCell = (arr, colorClass) => {
+          if (!arr.length) return `<span class="text-slate-600 font-mono text-xs">—</span>`;
+          const avg = Math.round(arr.reduce((sum, v) => sum + v, 0) / arr.length);
+          return `<div class="flex flex-col items-center leading-tight">
+                    <span class="${colorClass} font-mono font-bold text-xs">${avg}s</span>
+                    <span class="text-[9px] font-mono text-slate-500">n=${arr.length}</span>
+                  </div>`;
+        };
+
+        const showConsumer = !segmentFilterVal || segmentFilterVal === 'Consumer';
+        const showSMB = !segmentFilterVal || segmentFilterVal === 'SMB';
+
+        brandSummaryContainer.innerHTML = sortedTiles.map(tile => {
+          const accent = BRAND_ACCENTS[tile.brand] || '#6366f1';
+          const statusDot = tile.isLive
+            ? `<span class="flex h-2 w-2 relative"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span></span>`
+            : `<span class="h-2 w-2 rounded-full" style="background-color: ${accent};"></span>`;
+
+          const tickMsg = (tile.latestLiveChat?.transcript && tile.latestLiveChat.transcript.length > 0)
+            ? tile.latestLiveChat.transcript[tile.latestLiveChat.transcript.length - 1]
+            : null;
+
+          return `
+            <div class="bg-slate-900/65 border border-slate-800/90 rounded-xl overflow-hidden flex flex-col justify-between backdrop-blur-sm transition hover:border-slate-700 shadow-lg" style="border-top: 2px solid ${accent};">
+              <div class="px-3.5 py-2.5 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/40">
+                <div class="flex items-center gap-2 min-w-0">
+                  ${statusDot}
+                  <h3 class="text-sm font-extrabold text-white uppercase tracking-wider truncate">${tile.brand}</h3>
+                </div>
+                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800/90 text-slate-300 border border-slate-700/80">${tile.totalChats} chat${tile.totalChats === 1 ? '' : 's'}</span>
+              </div>
+
+              <div class="p-3">
+                <table class="w-full text-center border-collapse">
+                  <thead>
+                    <tr class="text-[10px] uppercase tracking-wider">
+                      <th class="pb-1.5 text-left font-semibold text-slate-500 w-[22%]"></th>
+                      ${showConsumer ? `<th colspan="2" class="pb-1.5 font-extrabold text-indigo-400 ${showSMB ? 'border-r border-slate-800/80' : ''}">Consumer <span class="text-[9px] font-mono font-normal text-slate-500">(${tile.cCount})</span></th>` : ''}
+                      ${showSMB ? `<th colspan="2" class="pb-1.5 font-extrabold text-purple-400">SMB <span class="text-[9px] font-mono font-normal text-slate-500">(${tile.sCount})</span></th>` : ''}
+                    </tr>
+                    <tr class="text-[9px] uppercase font-mono text-slate-400 border-b border-slate-800/80">
+                      <th class="pb-1.5 text-left font-sans text-slate-500">Queue</th>
+                      ${showConsumer ? `<th class="pb-1.5 font-semibold text-amber-300/80">EN</th><th class="pb-1.5 font-semibold text-cyan-300/80 ${showSMB ? 'border-r border-slate-800/80' : ''}">FR</th>` : ''}
+                      ${showSMB ? `<th class="pb-1.5 font-semibold text-amber-300/80">EN</th><th class="pb-1.5 font-semibold text-cyan-300/80">FR</th>` : ''}
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/60">
+                    <tr>
+                      <td class="py-2 text-left text-[11px] font-semibold text-slate-300">Billing</td>
+                      ${showConsumer ? `<td class="py-2">${avgCell(tile.cEnBill, 'text-amber-300')}</td><td class="py-2 ${showSMB ? 'border-r border-slate-800/80' : ''}">${avgCell(tile.cFrBill, 'text-cyan-300')}</td>` : ''}
+                      ${showSMB ? `<td class="py-2">${avgCell(tile.sEnBill, 'text-amber-300')}</td><td class="py-2">${avgCell(tile.sFrBill, 'text-cyan-300')}</td>` : ''}
+                    </tr>
+                    <tr>
+                      <td class="py-2 text-left text-[11px] font-semibold text-slate-300">Sales</td>
+                      ${showConsumer ? `<td class="py-2">${avgCell(tile.cEnSales, 'text-amber-300')}</td><td class="py-2 ${showSMB ? 'border-r border-slate-800/80' : ''}">${avgCell(tile.cFrSales, 'text-cyan-300')}</td>` : ''}
+                      ${showSMB ? `<td class="py-2">${avgCell(tile.sEnSales, 'text-amber-300')}</td><td class="py-2">${avgCell(tile.sFrSales, 'text-cyan-300')}</td>` : ''}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              ${tile.isLive ? `
+                <div class="px-3.5 py-2 border-t border-slate-800/80 bg-emerald-950/20">
+                  <div class="text-[9px] uppercase font-semibold text-emerald-400 tracking-wider flex items-center gap-1.5 mb-0.5">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> Live Chromium
+                  </div>
+                  <div class="ticker-text text-[11px] font-mono text-slate-300 truncate">
+                    ${tickMsg ? `<span class="text-slate-500">[${escHtml(tickMsg.role.toUpperCase())}]</span> ${escHtml(tickMsg.text)}` : '<span class="text-slate-500 italic">Loading page...</span>'}
+                  </div>
+                </div>
+              ` : ''}
+            </div>`;
+        }).join('');
       }
 
-      document.getElementById('drawerMetrics').innerHTML = `
-        <div class="metric"><label>Bot Reply</label><span>${fmtSec(c.botResponseSec)}</span></div>
-        <div class="metric"><label>Agent Wait</label><span>${fmtSec(c.agentWaitSec)}</span></div>`;
+      // 2. Render Raw Chat Table
+      const liveChats = timeframeChats.filter(c => ['in-progress', 'queued'].includes(c.status));
+      const scheduledChats = timeframeChats.filter(c => c.status === 'scheduled');
+      const pastChats = timeframeChats.filter(c => !['in-progress', 'queued', 'scheduled'].includes(c.status));
 
-      document.getElementById('drawerTranscript').innerHTML = c.transcript.length
-        ? c.transcript.map((m) => `
-            <div class="msg ${m.sender}">
-              <small>${m.sender} • ${new Date(m.time).toLocaleTimeString()}</small>
-              ${esc(m.text)}
-            </div>`).join('')
-        : '<div style="color:var(--muted);font-size:13px;">No messages captured yet.</div>';
-    }
+      document.getElementById('countAll').textContent = timeframeChats.length;
+      document.getElementById('countLive').textContent = liveChats.length;
+      document.getElementById('countScheduled').textContent = scheduledChats.length;
+      document.getElementById('countPast').textContent = pastChats.length;
 
-    function openLaunchModal() { document.getElementById('launchModal').classList.add('open'); }
-    function closeLaunchModal() { document.getElementById('launchModal').classList.remove('open'); }
+      let filterChats = timeframeChats;
+      if (currentFilter === 'live') filterChats = liveChats;
+      if (currentFilter === 'scheduled') filterChats = scheduledChats;
+      if (currentFilter === 'past') filterChats = pastChats;
 
-    async function startChats() {
-      const brandIds = Array.from(document.querySelectorAll('#launchBrands input:checked')).map((i) => i.value);
-      if (!brandIds.length) return alert('Select at least one carrier.');
-      await fetch('/api/chats/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brandIds,
-          segment: document.getElementById('launchSegment').value,
-          language: document.getElementById('launchLang').value,
-          customUrl: document.getElementById('launchUrl').value.trim()
-        })
-      });
-      closeLaunchModal();
-      refresh();
-    }
+      lastVisiblePastChats = filterChats.filter(c => !['in-progress', 'queued', 'scheduled'].includes(c.status));
+      updateBulkBar();
 
-    async function stopChat(id) {
-      await fetch(`/api/chats/${id}/stop`, { method: 'POST' });
-      refresh();
-    }
-
-    async function openScheduleModal() {
-      document.getElementById('scheduleModal').classList.add('open');
-      document.getElementById('schedWarning').textContent = '';
-      loadSchedules();
-    }
-    function closeScheduleModal() { document.getElementById('scheduleModal').classList.remove('open'); }
-
-    async function loadSchedules() {
-      const list = await fetch('/api/schedules').then((r) => r.json());
-      document.getElementById('schedList').innerHTML = list.length
-        ? list.map((s) => `
-            <div class="sched-item">
-              <div>
-                <b>${s.brandIds.join(', ')}</b> (${s.segment} / ${s.language})<br/>
-                <span style="color:var(--muted);">${new Date(s.runAt).toLocaleString()} — ${s.status}</span>
-              </div>
-              <button class="danger sm" onclick="deleteSchedule('${s.id}')">Remove</button>
-            </div>`).join('')
-        : '<div style="font-size:12px;color:var(--muted);">No scheduled runs.</div>';
-    }
-
-    async function createSchedule(force) {
-      const brandIds = Array.from(document.querySelectorAll('#schedBrands input:checked')).map((i) => i.value);
-      const runAt = document.getElementById('schedTime').value;
-      if (!brandIds.length || !runAt) return alert('Pick at least one carrier and a date/time.');
-
-      const res = await fetch('/api/schedules', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          brandIds,
-          segment: document.getElementById('schedSegment').value,
-          language: document.getElementById('schedLang').value,
-          runAt: new Date(runAt).toISOString(),
-          force
-        })
-      });
-
-      if (res.status === 409) {
-        const err = await res.json();
-        document.getElementById('schedWarning').innerHTML =
-          `${esc(err.error)} <button class="sm" style="margin-left:8px;" onclick="createSchedule(true)">Schedule Anyway</button>`;
+      if (filterChats.length === 0) {
+        tableBody.innerHTML = '';
+        tableBody.appendChild(emptyRow);
         return;
       }
-      document.getElementById('schedWarning').textContent = '';
-      loadSchedules();
+
+      tableBody.innerHTML = filterChats.map(c => {
+        const isLive = ['in-progress', 'queued'].includes(c.status);
+        const isScheduled = c.status === 'scheduled';
+        const canSelect = !isLive && !isScheduled;
+
+        let statusBadge = '';
+        if (isLive) {
+          statusBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>${c.status === 'queued' ? 'Queued' : 'Live'}</span>`;
+        } else if (isScheduled) {
+          statusBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/15 text-indigo-400 border border-indigo-500/20"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>Scheduled</span>`;
+        } else {
+          statusBadge = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">Completed</span>`;
+        }
+
+        const s = c.structuredOutputs || {};
+        const brandStr = normalizeBrand(s.brand) || 'Manual Entry';
+        const segStr = normalizeSegment(s.segment);
+        const useCaseRaw = normalizeUseCase(s.useCase);
+        const useCaseStr = useCaseRaw === 'Billing' ? 'Billing / Care' : useCaseRaw;
+        const langStr = normalizeLanguage(s.language);
+        const urlShort = (c.targetUrl || '').replace(/^https?:\/\/(www\.)?/, '');
+
+        const rowTime = new Date(c.startedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        const rowDate = new Date(c.startedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const timeDisplayStr = `${rowDate} • ${rowTime}`;
+
+        const isExpanded = expandedRows.has(c.id);
+        const expandBtnIcon = isExpanded
+          ? `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>`
+          : `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>`;
+
+        const ttaVal = parseToSec(s.timeToAgent);
+        const waitDisplay = (s.waitTimes && s.waitTimes !== '—') ? s.waitTimes : '—';
+        const isTerminating = terminatingChats.has(c.id);
+
+        let actionButtons = '';
+        if (isScheduled) {
+          actionButtons = `<button onclick="cancelScheduledChat('${c.id}', event)" class="px-3 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 hover:text-white text-rose-400 border border-rose-500/20 text-[11px] font-semibold transition">Cancel</button>`;
+        } else if (isLive) {
+          actionButtons = `
+            <div class="flex items-center justify-end gap-2">
+              <button onclick="openTranscript('${c.id}', event)" class="px-2.5 py-1.5 rounded-lg bg-[#11b34a] hover:bg-[#0e993f] text-white font-semibold text-[11px] shadow-sm transition">Live Feed</button>
+              <button onclick="terminateLiveChat('${c.id}', event)" ${isTerminating ? 'disabled' : ''} class="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-40 text-white font-semibold text-[11px] transition">
+                ${isTerminating ? 'Ending...' : 'End'}
+              </button>
+            </div>`;
+        } else {
+          actionButtons = `
+            <div class="flex items-center justify-end gap-1.5">
+              <button onclick="openTranscript('${c.id}', event)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold text-[11px] transition">Transcript</button>
+              <button onclick="deleteChat('${c.id}', event)" title="Delete chat from logs & exports" class="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/20 transition">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>`;
+        }
+
+        const checkboxCell = `<td class="py-3 pl-4 pr-2" onclick="event.stopPropagation()">${
+          canSelect
+            ? `<input type="checkbox" ${selectedChatIds.has(c.id) ? 'checked' : ''} onchange="toggleSelectChat('${c.id}', this.checked)" class="rounded border-slate-600 bg-slate-900 text-indigo-500 cursor-pointer">`
+            : ''
+        }</td>`;
+
+        const mainRow = `
+          <tr onclick="toggleRow('${c.id}')" class="hover:bg-slate-900/40 cursor-pointer transition ${selectedChatIds.has(c.id) ? 'bg-rose-500/5' : ''}">
+            ${checkboxCell}
+            <td class="py-3 px-4">${statusBadge}</td>
+            <td class="py-3 px-4">
+              <div class="font-bold text-slate-100">${escHtml(brandStr)} <span class="ml-1 px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-medium">${segStr}</span></div>
+              <div class="text-[10px] font-mono text-slate-500 mt-0.5 truncate max-w-[210px]" title="${escHtml(c.targetUrl)}">${escHtml(urlShort || 'Manual Entry')}</div>
+            </td>
+            <td class="py-3 px-4">
+              <div class="font-semibold text-slate-200">${escHtml(useCaseStr)} (${langStr})</div>
+              <div class="text-[10px] text-slate-500 mt-0.5">${isScheduled ? formatTimeBucketString(c.bucket) : getTimeSlot(c.startedAt)}</div>
+            </td>
+            <td class="py-3 px-4 font-medium text-cyan-400">${escHtml(waitDisplay)}</td>
+            <td class="py-3 px-4 font-mono font-extrabold text-amber-300">${ttaVal !== null ? formatSecDisplay(ttaVal) : (s.timeToAgent && s.timeToAgent !== '—' ? escHtml(s.timeToAgent) : '<span class="text-slate-600">—</span>')}</td>
+            <td class="py-3 px-4 text-slate-400 font-mono text-[11px]">${timeDisplayStr}</td>
+            <td class="py-3 px-4" onclick="event.stopPropagation()">
+              <div class="flex items-center justify-end gap-2">
+                ${actionButtons}
+                ${!isScheduled ? `<button onclick="toggleRow('${c.id}')" class="text-slate-500 hover:text-slate-300 p-1 rounded transition">${expandBtnIcon}</button>` : ''}
+              </div>
+            </td>
+          </tr>`;
+
+        const detailedRow = (isExpanded && !isScheduled) ? `
+          <tr class="bg-slate-950/60">
+            <td colspan="8" class="p-4 sm:p-5">
+              <div class="space-y-3">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div class="bg-slate-900/80 border border-slate-800 p-3 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Chat ID</span>
+                    <div class="text-xs font-mono text-slate-300 mt-1 truncate select-all">${escHtml(c.id)}</div>
+                  </div>
+                  <div class="bg-slate-900/80 border border-slate-800 p-3 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Reported Wait / Bot</span>
+                    <div class="text-xs font-semibold text-cyan-400 mt-1">${escHtml(waitDisplay)}</div>
+                  </div>
+                  <div class="bg-slate-900/80 border border-slate-800 p-3 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Time to Agent</span>
+                    <div class="text-xs font-semibold text-amber-300 mt-1">${ttaVal !== null ? formatSecDisplay(ttaVal) : escHtml(s.timeToAgent || '—')}</div>
+                  </div>
+                  <div class="bg-slate-900/80 border border-slate-800 p-3 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">HOOPs</span>
+                    <div class="text-xs font-medium text-slate-200 mt-1">${s.hoops && s.hoops.trim() ? escHtml(s.hoops) : 'None mentioned'}</div>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div class="bg-slate-900/80 border border-slate-800 p-3.5 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Chat Platform / System Used</span>
+                    <p class="text-xs text-slate-300 mt-1.5 leading-relaxed">${escHtml(s.systemUsed || 'No system details logged.')}</p>
+                  </div>
+                  <div class="bg-slate-900/80 border border-slate-800 p-3.5 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Chat VA Options / Path</span>
+                    <p class="text-xs text-slate-300 mt-1.5 leading-relaxed">${escHtml(s.ivrOptions || 'No path options logged.')}</p>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 ${c.lastScreenshot ? 'md:grid-cols-3' : ''} gap-3">
+                  <div class="${c.lastScreenshot ? 'md:col-span-2' : ''} bg-slate-900/80 border border-slate-800 p-3.5 rounded-lg">
+                    <span class="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Customer Experience to Agent</span>
+                    <p class="text-xs text-slate-300 mt-1.5 leading-relaxed">${s.cxToAgent && s.cxToAgent.trim() ? escHtml(s.cxToAgent) : 'No customer experience observations recorded.'}</p>
+                  </div>
+                  ${c.lastScreenshot ? `
+                    <div class="bg-slate-900/80 border border-slate-800 p-2 rounded-lg cursor-pointer" onclick="openTranscript('${c.id}', event)">
+                      <img src="${c.lastScreenshot}" class="w-full h-28 object-cover rounded border border-slate-700/70" alt="Last Frame" />
+                    </div>` : ''}
+                </div>
+              </div>
+            </td>
+          </tr>` : '';
+
+        return mainRow + detailedRow;
+      }).join('');
     }
 
-    async function deleteSchedule(id) {
-      await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
-      loadSchedules();
+    function setFilter(f) {
+      currentFilter = f;
+      ['all', 'live', 'scheduled', 'past'].forEach(k => {
+        const btn = document.getElementById('btnFilter' + k.charAt(0).toUpperCase() + k.slice(1));
+        if (btn) {
+          btn.className = k === f
+            ? 'px-3 py-1.5 rounded-md bg-indigo-600 text-white font-medium transition shadow-sm'
+            : 'px-3 py-1.5 rounded-md text-slate-400 hover:text-white transition';
+        }
+      });
+      render();
     }
 
-    init();
+    async function terminateLiveChat(id, e) {
+      if (e) e.stopPropagation();
+      if (!confirm('Are you sure you want to stop this active Chromium chat?')) return;
+      terminatingChats.add(id);
+      render();
+      try { await fetch(`/api/chats/${id}/end`, { method: 'POST' }); }
+      catch (err) { alert('Failed to end chat. Connection error.'); }
+      finally { terminatingChats.delete(id); render(); }
+    }
+
+    async function cancelScheduledChat(id, e) {
+      if (e) e.stopPropagation();
+      if (!confirm('Cancel this scheduled automated chat?')) return;
+      try {
+        const res = await fetch(`/api/chats/schedule/${id}`, { method: 'DELETE' });
+        if (res.ok) { chats.delete(id); render(); }
+        else alert('Failed to cancel schedule.');
+      } catch (err) { alert('Connection error.'); }
+    }
+
+    // Export Modal Logic
+    function openExportModal() {
+      document.getElementById('exportPresetSelect').value = currentTimeframe;
+      handleExportPresetChange();
+      document.getElementById('exportModal').classList.remove('hidden');
+    }
+
+    function closeExportModal() {
+      document.getElementById('exportModal').classList.add('hidden');
+    }
+
+    function handleExportPresetChange() {
+      const val = document.getElementById('exportPresetSelect').value;
+      const customDiv = document.getElementById('exportCustomDatesDiv');
+      if (val === 'custom') {
+        customDiv.classList.remove('hidden'); customDiv.classList.add('grid');
+        if (!document.getElementById('exportStartDate').value) {
+          const bounds = getPresetBounds('week');
+          document.getElementById('exportStartDate').value = toLocalYMD(bounds.start);
+          document.getElementById('exportEndDate').value = toLocalYMD(bounds.end);
+        }
+      } else {
+        customDiv.classList.add('hidden'); customDiv.classList.remove('grid');
+      }
+      updateExportPreviewCount();
+    }
+
+    function getExportChats(excludeScheduled = true) {
+      const preset = document.getElementById('exportPresetSelect').value;
+      const startVal = document.getElementById('exportStartDate').value;
+      const endVal = document.getElementById('exportEndDate').value;
+      const bounds = getPresetBounds(preset, startVal, endVal);
+
+      const matched = Array.from(chats.values()).filter(c => {
+        if (excludeScheduled && c.status === 'scheduled') return false;
+        const cTime = new Date(c.startedAt).getTime();
+        if (bounds.start && cTime < bounds.start.getTime()) return false;
+        if (bounds.end && cTime > bounds.end.getTime()) return false;
+        return true;
+      }).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+
+      return { matched, preset, bounds };
+    }
+
+    function updateExportPreviewCount() {
+      const { matched } = getExportChats(true);
+      document.getElementById('exportMatchCount').textContent = `${matched.length} chat${matched.length === 1 ? '' : 's'}`;
+    }
+
+    function buildDateRows(preset, bounds, matchChats) {
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      const byYMD = {};
+      let minDate = null, maxDate = null;
+
+      matchChats.forEach(c => {
+        const d = new Date(c.startedAt);
+        const ymd = toLocalYMD(d);
+        (byYMD[ymd] = byYMD[ymd] || []).push(c);
+        if (!minDate || d < minDate) minDate = d;
+        if (!maxDate || d > maxDate) maxDate = d;
+      });
+
+      let startDate = bounds.start ? new Date(bounds.start.getFullYear(), bounds.start.getMonth(), bounds.start.getDate()) : null;
+      let endDate = bounds.end ? new Date(bounds.end.getFullYear(), bounds.end.getMonth(), bounds.end.getDate()) : null;
+      const today = new Date();
+      const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+      if (preset === 'week' || preset === 'month') {
+        const cap = maxDate && maxDate > todayDay
+          ? new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate())
+          : todayDay;
+        if (endDate && cap < endDate) endDate = cap;
+      } else if (preset === 'all') {
+        if (!minDate) return [];
+        startDate = new Date(minDate.getFullYear(), minDate.getMonth(), minDate.getDate());
+        endDate = new Date(maxDate.getFullYear(), maxDate.getMonth(), maxDate.getDate());
+      }
+
+      if (!startDate || !endDate || startDate > endDate || Math.round((endDate - startDate) / 86400000) > 65) {
+        return Object.keys(byYMD).sort().map(ymd => {
+          const [y, m, day] = ymd.split('-').map(Number);
+          const d = new Date(y, m - 1, day);
+          return { ymd, dow: days[d.getDay()], dateStr: `${String(d.getDate()).padStart(2, '0')}-${months[d.getMonth()]}`, chats: byYMD[ymd] || [] };
+        });
+      }
+
+      const rows = [];
+      const cursor = new Date(startDate);
+      while (cursor <= endDate) {
+        const ymd = toLocalYMD(cursor);
+        rows.push({ ymd, dow: days[cursor.getDay()], dateStr: `${String(cursor.getDate()).padStart(2, '0')}-${months[cursor.getMonth()]}`, chats: byYMD[ymd] || [] });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      return rows;
+    }
+
+    async function downloadStyledExcelMatrix() {
+      if (typeof ExcelJS === 'undefined') return alert('Excel export library is still loading. Try again in a moment.');
+      const { matched, preset, bounds } = getExportChats(true);
+      const dateRows = buildDateRows(preset, bounds, matched);
+      if (dateRows.length === 0) return alert('No dates or chats found in the selected timeframe.');
+
+      const btn = document.getElementById('exportExcelBtn');
+      btn.disabled = true;
+
+      try {
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Comp Chat';
+        wb.created = new Date();
+        const ws = wb.addWorksheet('Chat Telemetry Matrix', { views: [{ showGridLines: false }] });
+
+        const BRAND_STYLES = {
+          'Rogers':    { bg: 'FFDA291C', fg: 'FFFFFFFF', match: ['rogers'] },
+          'Videotron': { bg: 'FFFFFF00', fg: 'FF000000', match: ['videotron', 'vidéotron'] }
+        };
+
+        const consumerBrands = ['Rogers', 'Videotron'];
+        const businessBrands = ['Rogers', 'Videotron'];
+
+        const thinBorder = {
+          top: { style: 'thin', color: { argb: 'FFA6A6A6' } },
+          left: { style: 'thin', color: { argb: 'FFA6A6A6' } },
+          bottom: { style: 'thin', color: { argb: 'FFA6A6A6' } },
+          right: { style: 'thin', color: { argb: 'FFA6A6A6' } }
+        };
+        const neutralFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+        const whiteFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } };
+        const centerAlign = { vertical: 'middle', horizontal: 'center' };
+
+        const styleRange = (r1, c1, r2, c2, { fill, font, border = thinBorder, alignment = centerAlign }) => {
+          for (let r = r1; r <= r2; r++) {
+            for (let c = c1; c <= c2; c++) {
+              const cell = ws.getCell(r, c);
+              if (fill) cell.fill = fill;
+              if (font) cell.font = font;
+              if (border) cell.border = border;
+              if (alignment) cell.alignment = alignment;
+            }
+          }
+        };
+
+        const getAvgTTA = (list, brandKey, segment, useCase, lang) => {
+          const validNames = BRAND_STYLES[brandKey].match;
+          const filtered = list.filter(c => {
+            const s = c.structuredOutputs || {};
+            const b = (normalizeBrand(s.brand) || '').toLowerCase();
+            if (!validNames.includes(b)) return false;
+            if (normalizeSegment(s.segment) !== segment) return false;
+            if (normalizeLanguage(s.language) !== lang) return false;
+            const uc = normalizeUseCase(s.useCase);
+            return useCase === 'Sales' ? uc === 'Sales' : uc !== 'Sales';
+          });
+          let sum = 0, count = 0;
+          filtered.forEach(c => {
+            const sec = getAdjustedTTASec(c.structuredOutputs);
+            if (sec !== null) { sum += sec; count++; }
+          });
+          return count > 0 ? Math.round(sum / count) : '-';
+        };
+
+        let curRow = 1;
+
+        const addConsumerSection = (title, useCase) => {
+          const totalCols = 2 + consumerBrands.length * 2;
+          ws.mergeCells(curRow, 1, curRow, totalCols);
+          ws.getCell(curRow, 1).value = title;
+          ws.getRow(curRow).height = 22;
+          styleRange(curRow, 1, curRow, totalCols, {
+            fill: neutralFill,
+            font: { name: 'Calibri', size: 12, bold: true, color: { argb: 'FF000000' } }
+          });
+          curRow++;
+
+          const headerRowTop = curRow;
+          const headerRowSub = curRow + 1;
+          ws.getRow(headerRowTop).height = 20;
+          ws.getRow(headerRowSub).height = 19;
+
+          ws.mergeCells(headerRowTop, 1, headerRowSub, 1); ws.getCell(headerRowTop, 1).value = 'DoW';
+          ws.mergeCells(headerRowTop, 2, headerRowSub, 2); ws.getCell(headerRowTop, 2).value = 'Date';
+          styleRange(headerRowTop, 1, headerRowSub, 2, {
+            fill: neutralFill,
+            font: { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF000000' } }
+          });
+
+          consumerBrands.forEach((brand, idx) => {
+            const cStart = 3 + idx * 2;
+            const cEnd = cStart + 1;
+            const bStyle = BRAND_STYLES[brand];
+            ws.mergeCells(headerRowTop, cStart, headerRowTop, cEnd);
+            ws.getCell(headerRowTop, cStart).value = brand;
+            styleRange(headerRowTop, cStart, headerRowTop, cEnd, {
+              fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: bStyle.bg } },
+              font: { name: 'Calibri', size: 11, bold: true, color: { argb: bStyle.fg } }
+            });
+            ws.getCell(headerRowSub, cStart).value = 'EN';
+            ws.getCell(headerRowSub, cEnd).value = 'FR';
+            styleRange(headerRowSub, cStart, headerRowSub, cEnd, {
+              fill: neutralFill,
+              font: { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF000000' } }
+            });
+          });
+          curRow += 2;
+
+          dateRows.forEach(dObj => {
+            ws.getRow(curRow).height = 19;
+            ws.getCell(curRow, 1).value = dObj.dow;
+            ws.getCell(curRow, 2).value = dObj.dateStr;
+            consumerBrands.forEach((brand, idx) => {
+              const cStart = 3 + idx * 2;
+              ws.getCell(curRow, cStart).value = getAvgTTA(dObj.chats, brand, 'Consumer', useCase, 'EN');
+              ws.getCell(curRow, cStart + 1).value = getAvgTTA(dObj.chats, brand, 'Consumer', useCase, 'FR');
+            });
+            styleRange(curRow, 1, curRow, totalCols, {
+              fill: whiteFill,
+              font: { name: 'Calibri', size: 11, bold: false, color: { argb: 'FF000000' } }
+            });
+            curRow++;
+          });
+        };
+
+        addConsumerSection('Consumer - Sales', 'Sales');
+        curRow += 2;
+        addConsumerSection('Consumer - Care & Loyalty', 'Billing');
+        curRow += 2;
+
+        const bizTotalCols = 2 + businessBrands.length * 4;
+        ws.mergeCells(curRow, 1, curRow, bizTotalCols);
+        ws.getCell(curRow, 1).value = 'Business - Sales, Care & Loyalty';
+        ws.getRow(curRow).height = 22;
+        styleRange(curRow, 1, curRow, bizTotalCols, {
+          fill: neutralFill,
+          font: { name: 'Calibri', size: 12, bold: true, color: { argb: 'FF000000' } }
+        });
+        curRow++;
+
+        const bRowBrand = curRow, bRowUseCase = curRow + 1, bRowLang = curRow + 2;
+        ws.getRow(bRowBrand).height = 20; ws.getRow(bRowUseCase).height = 19; ws.getRow(bRowLang).height = 19;
+        ws.mergeCells(bRowBrand, 1, bRowLang, 1); ws.getCell(bRowBrand, 1).value = 'DoW';
+        ws.mergeCells(bRowBrand, 2, bRowLang, 2); ws.getCell(bRowBrand, 2).value = 'Date';
+        styleRange(bRowBrand, 1, bRowLang, 2, {
+          fill: neutralFill,
+          font: { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF000000' } }
+        });
+
+        businessBrands.forEach((brand, idx) => {
+          const cStart = 3 + idx * 4;
+          const bStyle = BRAND_STYLES[brand];
+          ws.mergeCells(bRowBrand, cStart, bRowBrand, cStart + 3);
+          ws.getCell(bRowBrand, cStart).value = brand;
+          styleRange(bRowBrand, cStart, bRowBrand, cStart + 3, {
+            fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: bStyle.bg } },
+            font: { name: 'Calibri', size: 11, bold: true, color: { argb: bStyle.fg } }
+          });
+
+          ws.mergeCells(bRowUseCase, cStart, bRowUseCase, cStart + 1);
+          ws.getCell(bRowUseCase, cStart).value = 'Sales';
+          ws.mergeCells(bRowUseCase, cStart + 2, bRowUseCase, cStart + 3);
+          ws.getCell(bRowUseCase, cStart + 2).value = 'Care/Loyalty';
+          styleRange(bRowUseCase, cStart, bRowUseCase, cStart + 3, {
+            fill: neutralFill,
+            font: { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF000000' } }
+          });
+
+          ws.getCell(bRowLang, cStart).value = 'EN';
+          ws.getCell(bRowLang, cStart + 1).value = 'FR';
+          ws.getCell(bRowLang, cStart + 2).value = 'EN';
+          ws.getCell(bRowLang, cStart + 3).value = 'FR';
+          styleRange(bRowLang, cStart, bRowLang, cStart + 3, {
+            fill: neutralFill,
+            font: { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF000000' } }
+          });
+        });
+        curRow += 3;
+
+        dateRows.forEach(dObj => {
+          ws.getRow(curRow).height = 19;
+          ws.getCell(curRow, 1).value = dObj.dow;
+          ws.getCell(curRow, 2).value = dObj.dateStr;
+          businessBrands.forEach((brand, idx) => {
+            const cStart = 3 + idx * 4;
+            ws.getCell(curRow, cStart).value     = getAvgTTA(dObj.chats, brand, 'SMB', 'Sales', 'EN');
+            ws.getCell(curRow, cStart + 1).value = getAvgTTA(dObj.chats, brand, 'SMB', 'Sales', 'FR');
+            ws.getCell(curRow, cStart + 2).value = getAvgTTA(dObj.chats, brand, 'SMB', 'Billing', 'EN');
+            ws.getCell(curRow, cStart + 3).value = getAvgTTA(dObj.chats, brand, 'SMB', 'Billing', 'FR');
+          });
+          styleRange(curRow, 1, curRow, bizTotalCols, {
+            fill: whiteFill,
+            font: { name: 'Calibri', size: 11, bold: false, color: { argb: 'FF000000' } }
+          });
+          curRow++;
+        });
+
+        ws.getColumn(1).width = 7;
+        ws.getColumn(2).width = 10;
+        for (let c = 3; c <= bizTotalCols; c++) ws.getColumn(c).width = 9;
+
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `CompChat_Matrix_${preset}_${toLocalYMD(new Date())}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        closeExportModal();
+      } catch (err) {
+        alert(`Excel export failed: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function downloadRawCSV() {
+      const { matched, preset } = getExportChats(false);
+      if (matched.length === 0) return alert('No chat logs to export.');
+
+      const headers = [
+        'Chat ID', 'Status', 'Brand', 'Segment', 'Use Case', 'Language', 'Target URL',
+        'Reported Wait / Bot', 'Time to Agent', 'Time to Agent (Sec)', 'Adjusted Time to Agent (Sec)',
+        'System Used', 'HOOPs', 'Customer Experience', 'Chat Path', 'Start Time', 'End Time'
+      ];
+      const esc = (v) => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""').replace(/\n/g, ' ')}"`;
+
+      const rows = matched.map(c => {
+        const s = c.structuredOutputs || {};
+        const ttaSec = parseToSec(s.timeToAgent);
+        const adjustedTtaSec = getAdjustedTTASec(s);
+        return [
+          c.id, c.status, normalizeBrand(s.brand) || s.brand || '', normalizeSegment(s.segment),
+          normalizeUseCase(s.useCase), normalizeLanguage(s.language), c.targetUrl || '',
+          s.waitTimes || '', s.timeToAgent || '', ttaSec !== null ? ttaSec : '',
+          adjustedTtaSec !== null ? adjustedTtaSec : '', s.systemUsed || '', s.hoops || '',
+          s.cxToAgent || '', s.ivrOptions || '', c.startedAt || '', c.endedAt || ''
+        ].map(esc).join(',');
+      });
+
+      const blob = new Blob(['\uFEFF' + [headers.join(','), ...rows].join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `CompChat_Raw_${preset}_${toLocalYMD(new Date())}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      closeExportModal();
+    }
+
+    // New Chat Modal
+    function openNewChatModal() {
+      document.getElementById('brandSelectInput').value = 'Rogers';
+      document.getElementById('segmentSelectInput').value = 'Consumer';
+      document.getElementById('useCaseSelectInput').value = 'Sales';
+      document.getElementById('languageSelectInput').value = 'English';
+      document.getElementById('customBrandNameInput').value = '';
+      document.getElementById('scheduleDateInput').value = '';
+      document.getElementById('scheduleBucketInput').value = '';
+      document.getElementById('customMinutesOffset').value = '5';
+      document.getElementById('customTimeStart').value = '';
+      document.getElementById('customTimeEnd').value = '';
+      setCustomScheduleMode('minutes');
+      document.getElementById('customBucketDiv').classList.add('hidden');
+      document.getElementById('customBucketDiv').classList.remove('flex');
+      document.getElementById('scheduleDateInput').disabled = false;
+      autoFillUrl();
+      document.getElementById('newChatModal').classList.remove('hidden');
+    }
+
+    function closeNewChatModal() {
+      document.getElementById('newChatModal').classList.add('hidden');
+    }
+
+    async function initiateNewChat() {
+      const brand = document.getElementById('brandSelectInput').value;
+      const customBrandName = document.getElementById('customBrandNameInput').value.trim();
+      const targetUrl = document.getElementById('targetUrlInput').value.trim();
+      const segment = document.getElementById('segmentSelectInput').value;
+      const useCase = document.getElementById('useCaseSelectInput').value;
+      const language = document.getElementById('languageSelectInput').value;
+      let dateVal = document.getElementById('scheduleDateInput').value;
+      let bucketVal = document.getElementById('scheduleBucketInput').value;
+
+      if (!targetUrl) return alert('Target chat URL is mandatory.');
+
+      let scheduleAtStr = null;
+
+      if (['2min', '5min', '10min', '30min'].includes(bucketVal)) {
+        const offsetMins = { '2min': 2, '5min': 5, '10min': 10, '30min': 30 }[bucketVal];
+        const scheduledDate = new Date(Date.now() + offsetMins * 60 * 1000);
+        scheduleAtStr = scheduledDate.toISOString();
+        const labelTime = scheduledDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        bucketVal = `In ${offsetMins}m (${labelTime})`;
+      } else if (bucketVal === 'custom') {
+        if (customScheduleMode === 'minutes') {
+          const mins = parseInt(document.getElementById('customMinutesOffset').value, 10);
+          if (isNaN(mins) || mins < 1 || mins > 1440) return alert('Please enter a valid number of minutes (1–1440).');
+          const scheduledDate = new Date(Date.now() + mins * 60 * 1000);
+          scheduleAtStr = scheduledDate.toISOString();
+          const labelTime = scheduledDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          bucketVal = `In ${mins}m (${labelTime})`;
+        } else {
+          if (!dateVal) dateVal = toLocalYMD(new Date());
+          const startTimeStr = document.getElementById('customTimeStart').value;
+          const endTimeStr = document.getElementById('customTimeEnd').value;
+          if (!startTimeStr) return alert('Please select a Start Time.');
+          const [year, month, day] = dateVal.split('-').map(Number);
+          const [startH, startM] = startTimeStr.split(':').map(Number);
+          const startMs = new Date(year, month - 1, day, startH, startM, 0, 0).getTime();
+          let endMs = startMs;
+          if (endTimeStr) {
+            const [endH, endM] = endTimeStr.split(':').map(Number);
+            endMs = new Date(year, month - 1, day, endH, endM, 0, 0).getTime();
+            if (endMs < startMs) return alert('End Time must be equal to or later than Start Time.');
+          }
+          const minFutureMs = Date.now() + 15 * 1000;
+          if (endMs < minFutureMs) return alert('Selected time has already passed. Pick a future time.');
+          const effectiveStartMs = Math.max(startMs, minFutureMs);
+          const targetMs = endMs > effectiveStartMs
+            ? Math.floor(Math.random() * (endMs - effectiveStartMs)) + effectiveStartMs
+            : effectiveStartMs;
+          scheduleAtStr = new Date(targetMs).toISOString();
+          const fmtTime = (ms) => new Date(ms).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+          bucketVal = endTimeStr && endTimeStr !== startTimeStr ? `${fmtTime(startMs)} - ${fmtTime(endMs)}` : fmtTime(startMs);
+        }
+      } else if (dateVal && bucketVal) {
+        const [startHour, endHour] = bucketVal.split(',').map(Number);
+        const [year, month, day] = dateVal.split('-').map(Number);
+        const windowStartMs = new Date(year, month - 1, day, startHour, 0, 0, 0).getTime();
+        const windowEndMs = new Date(year, month - 1, day, endHour, 0, 0, 0).getTime();
+        const minFutureMs = Date.now() + 30 * 1000;
+        if (windowEndMs <= minFutureMs) return alert('The selected window is in the past.');
+        const effectiveStartMs = Math.max(windowStartMs, minFutureMs);
+        scheduleAtStr = new Date(Math.floor(Math.random() * (windowEndMs - effectiveStartMs)) + effectiveStartMs).toISOString();
+      } else if (dateVal || bucketVal) {
+        return alert('Select both a date and a window, or leave on "Launch Immediately".');
+      }
+
+      const btn = document.getElementById('initiateChatBtn');
+      btn.disabled = true; btn.innerHTML = 'Dispatching...';
+
+      try {
+        const payload = {
+          targetUrl,
+          brand: brand === 'Other' ? (customBrandName || 'Custom') : brand,
+          segment, useCase, language
+        };
+        if (scheduleAtStr) {
+          payload.scheduleAt = scheduleAtStr;
+          payload.scheduleBucket = bucketVal;
+        }
+        const res = await fetch('/api/chats/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          closeNewChatModal();
+          setFilter(data.scheduled ? 'scheduled' : 'live');
+        } else {
+          const err = await res.json();
+          alert(`Schedule Alert: ${err.error || err.message || 'Error occurred.'}`);
+        }
+      } catch (err) {
+        alert('Server connectivity error.');
+      } finally {
+        btn.disabled = false; btn.innerHTML = 'Dispatch Chat';
+      }
+    }
+
+    // Batch Campaign Modal
+    function openBatchModal() {
+      document.getElementById('batchBrandSelect').value = 'Rogers';
+      document.getElementById('batchDateInput').value = '';
+      document.getElementById('batchBucketInput').value = '';
+      document.getElementById('batchCustomBucketStart').value = '';
+      document.getElementById('batchCustomBucketEnd').value = '';
+      document.getElementById('batchCustomBucketDiv').classList.add('hidden');
+      document.getElementById('batchCustomBucketDiv').classList.remove('flex');
+      document.getElementById('batchModal').classList.remove('hidden');
+    }
+
+    function closeBatchModal() {
+      document.getElementById('batchModal').classList.add('hidden');
+    }
+
+    function handleBatchBucketChange() {
+      const val = document.getElementById('batchBucketInput').value;
+      const div = document.getElementById('batchCustomBucketDiv');
+      const dateInput = document.getElementById('batchDateInput');
+      if (val && !dateInput.value) dateInput.value = toLocalYMD(new Date());
+      if (val === 'custom') { div.classList.remove('hidden'); div.classList.add('flex'); }
+      else { div.classList.add('hidden'); div.classList.remove('flex'); }
+    }
+
+    async function initiateBatchCampaign() {
+      const brand = document.getElementById('batchBrandSelect').value;
+      const dateVal = document.getElementById('batchDateInput').value;
+      let bucketVal = document.getElementById('batchBucketInput').value;
+
+      if (bucketVal === 'custom') {
+        const sh = parseInt(document.getElementById('batchCustomBucketStart').value, 10);
+        const eh = parseInt(document.getElementById('batchCustomBucketEnd').value, 10);
+        if (isNaN(sh) || isNaN(eh) || sh >= eh || sh < 0 || eh > 24) return alert('Enter a valid custom time window.');
+        bucketVal = `${sh},${eh}`;
+      }
+
+      let windowStartMs = null, windowEndMs = null;
+      if (dateVal && bucketVal) {
+        const [startHour, endHour] = bucketVal.split(',').map(Number);
+        const [year, month, day] = dateVal.split('-').map(Number);
+        windowStartMs = new Date(year, month - 1, day, startHour, 0, 0, 0).getTime();
+        windowEndMs = new Date(year, month - 1, day, endHour, 0, 0, 0).getTime();
+        if (windowEndMs <= Date.now() + 30 * 1000) return alert('Selected window has already passed.');
+      } else if (dateVal || bucketVal) {
+        return alert('Select both a date and time window, or leave both blank to launch immediately.');
+      }
+
+      const btn = document.getElementById('dispatchBatchBtn');
+      btn.disabled = true; btn.innerHTML = 'Dispatching...';
+
+      const segments = ['Consumer', 'Small Business'];
+      const useCases = ['Sales', 'Billing'];
+      const languages = ['English', 'French'];
+      let successCount = 0, failCount = 0;
+
+      try {
+        for (const segment of segments) {
+          for (const useCase of useCases) {
+            for (const language of languages) {
+              const targetUrl = resolveChatUrl(brand, segment, useCase, language);
+              if (!targetUrl) continue;
+              try {
+                const payload = { targetUrl, brand, segment, useCase, language };
+                if (windowStartMs && windowEndMs) {
+                  const effectiveStart = Math.max(windowStartMs, Date.now() + 30 * 1000);
+                  const randMs = Math.floor(Math.random() * (windowEndMs - effectiveStart)) + effectiveStart;
+                  payload.scheduleAt = new Date(randMs).toISOString();
+                  payload.scheduleBucket = bucketVal;
+                }
+                const res = await fetch('/api/chats/start', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(payload)
+                });
+                if (res.ok) successCount++; else failCount++;
+              } catch (err) { failCount++; }
+            }
+          }
+        }
+        alert(`Batch campaign complete! Dispatched: ${successCount} | Skipped/Failed: ${failCount}`);
+        closeBatchModal();
+        setFilter(windowStartMs ? 'scheduled' : 'live');
+      } finally {
+        btn.disabled = false; btn.innerHTML = 'Launch 8 Combinations';
+      }
+    }
+
+    setInterval(() => {
+      const hasLive = Array.from(chats.values()).some(c => ['in-progress', 'queued'].includes(c.status));
+      if (hasLive) render();
+    }, 2000);
   </script>
 </body>
 </html>

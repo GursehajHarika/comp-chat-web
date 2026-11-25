@@ -1,122 +1,70 @@
 const BRANDS = {
-  rogers: {
-    id: 'rogers',
+  Rogers: {
     name: 'Rogers',
     color: '#DA291C',
     urls: {
-      EN: 'https://www.rogers.com/contact',
-      FR: 'https://www.rogers.com/contact?setLanguage=fr'
+      Consumer: {
+        EN: {
+          Sales: 'https://www.rogers.com/phones',
+          Billing: 'https://www.rogers.com/support'
+        },
+        FR: {
+          Sales: 'https://www.rogers.com/phones?setLanguage=fr',
+          Billing: 'https://www.rogers.com/support?setLanguage=fr'
+        }
+      },
+      SMB: {
+        EN: {
+          Sales: 'https://www.rogers.com/business/wireless/devices',
+          Billing: 'https://www.rogers.com/business/support'
+        },
+        FR: {
+          Sales: 'https://www.rogers.com/business/wireless/devices?setLanguage=fr',
+          Billing: 'https://www.rogers.com/business/support?setLanguage=fr'
+        }
+      }
     },
     selectors: {
-      openChat: 'button:has-text("Ask Anna"), button:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"][placeholder*="message" i], input[placeholder*="question" i]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [class*="bubble"], [role="log"] p'
+      openChat:
+        'button:has-text("Need Help"), [role="button"]:has-text("Need Help"), a:has-text("Need Help"), text=/^\\s*Need Help\\??\\s*$/i, text=/Besoin d[\'’]aide/i, [aria-label*="Need Help" i], [aria-label*="chat" i]',
+      input:
+        'textarea, input[type="text"][placeholder*="message" i], input[placeholder*="question" i], [contenteditable="true"]',
+      send: 'button[type="submit"], button[aria-label*="send" i], button[aria-label*="envoyer" i]',
+      messages: '[class*="message"], [class*="bubble"], [role="log"] p, [role="log"] span'
     }
   },
-  bell: {
-    id: 'bell',
-    name: 'Bell',
-    color: '#00549A',
-    urls: {
-      EN: 'https://support.bell.ca/Contact-us',
-      FR: 'https://soutien.bell.ca/Nous-joindre'
-    },
-    selectors: {
-      openChat: 'button:has-text("Chat"), a:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"][placeholder*="message" i]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [class*="chat-text"], [role="log"] p'
-    }
-  },
-  telus: {
-    id: 'telus',
-    name: 'Telus',
-    color: '#4B286D',
-    urls: {
-      EN: 'https://www.telus.com/en/support/contact-us',
-      FR: 'https://www.telus.com/fr/support/contact-us'
-    },
-    selectors: {
-      openChat: 'button:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"][placeholder*="ask" i], input[placeholder*="message" i]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [role="log"] div'
-    }
-  },
-  videotron: {
-    id: 'videotron',
+  Videotron: {
     name: 'Videotron',
-    color: '#FFD200',
+    color: '#FACC15',
     urls: {
-      EN: 'https://www.videotron.com/en/contact-us',
-      FR: 'https://www.videotron.com/nous-joindre'
+      Consumer: {
+        EN: {
+          Sales: 'https://www.videotron.com/en/mobile/cell-phones',
+          Billing: 'https://www.videotron.com/en/support/mobile'
+        },
+        FR: {
+          Sales: 'https://www.videotron.com/mobilite/telephones-mobiles',
+          Billing: 'https://www.videotron.com/soutien/mobilite'
+        }
+      },
+      SMB: {
+        EN: {
+          Sales: 'https://www.videotron.com/business/mobile/cell-phones',
+          Billing: 'https://www.videotron.com/business/support'
+        },
+        FR: {
+          Sales: 'https://www.videotron.com/affaires/mobilite/telephones-mobiles',
+          Billing: 'https://www.videotron.com/affaires/soutien'
+        }
+      }
     },
     selectors: {
-      openChat: 'button:has-text("Chat"), button:has-text("Clavard"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [role="log"] p'
-    }
-  },
-  fido: {
-    id: 'fido',
-    name: 'Fido',
-    color: '#FFE600',
-    urls: {
-      EN: 'https://www.fido.ca/contact',
-      FR: 'https://www.fido.ca/contact?setLanguage=fr'
-    },
-    selectors: {
-      openChat: 'button:has-text("Ask Jack"), button:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [class*="bubble"]'
-    }
-  },
-  virgin: {
-    id: 'virgin',
-    name: 'Virgin Plus',
-    color: '#E10A0A',
-    urls: {
-      EN: 'https://www.virginplus.ca/en/support/contact-us.html',
-      FR: 'https://www.virginplus.ca/fr/support/contact-us.html'
-    },
-    selectors: {
-      openChat: 'button:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [role="log"] p'
-    }
-  },
-  koodo: {
-    id: 'koodo',
-    name: 'Koodo',
-    color: '#8C33A4',
-    urls: {
-      EN: 'https://www.koodomobile.com/en/help',
-      FR: 'https://www.koodomobile.com/fr/help'
-    },
-    selectors: {
-      openChat: 'button:has-text("Koodo Assist"), button:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [role="log"] p'
-    }
-  },
-  freedom: {
-    id: 'freedom',
-    name: 'Freedom Mobile',
-    color: '#F37021',
-    urls: {
-      EN: 'https://www.freedommobile.ca/en-CA/contact-us',
-      FR: 'https://www.freedommobile.ca/fr-CA/contact-us'
-    },
-    selectors: {
-      openChat: 'button:has-text("Chat"), [aria-label*="chat" i]',
-      input: 'textarea, input[type="text"]',
-      send: 'button[type="submit"], button[aria-label*="send" i]',
-      messages: '[class*="message"], [role="log"] p'
+      openChat:
+        'button[aria-label*="chat" i], button[aria-label*="clavard" i], button[aria-label*="messenger" i], [id*="genesys" i] button, iframe[title*="chat" i], iframe[title*="messenger" i], iframe[title*="clavard" i], button:has-text("Chat"), button:has-text("Clavard")',
+      input:
+        'textarea, input[type="text"][placeholder*="message" i], input[placeholder*="question" i], [contenteditable="true"]',
+      send: 'button[type="submit"], button[aria-label*="send" i], button[aria-label*="envoyer" i]',
+      messages: '[class*="message"], [class*="bubble"], [role="log"] p, [role="log"] span'
     }
   }
 };
@@ -128,7 +76,7 @@ const PROMPTS = {
       'Can I please speak with a live billing agent?'
     ],
     Sales: [
-      'Hi, I am looking to switch my mobile plan and want to check current BYOD offers.',
+      'Hi, I am looking to switch my mobile plan and want to check current offers.',
       'Can you connect me to a live sales representative?'
     ]
   },
@@ -144,4 +92,11 @@ const PROMPTS = {
   }
 };
 
-module.exports = { BRANDS, PROMPTS };
+function resolveBrandUrl(brand, segment, useCase, language) {
+  const seg = /business|smb/i.test(segment || '') ? 'SMB' : 'Consumer';
+  const lang = /^fr/i.test(language || '') ? 'FR' : 'EN';
+  const uc = /sale/i.test(useCase || '') ? 'Sales' : 'Billing';
+  return BRANDS[brand]?.urls?.[seg]?.[lang]?.[uc] || '';
+}
+
+module.exports = { BRANDS, PROMPTS, resolveBrandUrl };
