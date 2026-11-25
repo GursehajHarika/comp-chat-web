@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Comp Chat — Competitive Chat Monitor</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --surface: #131922;
+      --surface-2: #1b2330;
+      --border: #253042;
+      --text: #eef2f7;
+      --muted: #8b9bb4;
+      --green: #11b34a;
+      --green-hover: #0e9a3f;
+      --danger: #e5484d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 24px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+    .brand-title { display: flex; align-items: center; gap: 12px; }
+    .brand-title h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
+    .pill {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 600;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .pill.ok { color: #3dd68c; border-color: rgba(17,179,74,0.4); background: rgba(17,179,74,0.12); }
+    .pill.warn { color: #f5a524; border-color: rgba(245,165,36,0.4); background: rgba(245,165,36,0.12); }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      transition: 0.15s;
+    }
+    button:hover { border-color: #3c4d66; }
+    button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+    button.primary:hover { background: var(--green-hover); }
+    button.danger { background: rgba(229,72,77,0.14); border-color: rgba(229,72,77,0.4); color: #ff7b7f; }
+    button.sm { padding: 5px 10px; font-size: 12px; }
+
+    main { max-width: 1440px; margin: 0 auto; padding: 20px 24px 60px; }
+
+    /* Top Scrollable Brand Cards */
+    .cards-row {
+      display: flex;
+      gap: 14px;
+      overflow-x: auto;
+      padding-bottom: 10px;
+      margin-bottom: 20px;
+    }
+    .brand-card {
+      min-width: 210px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--accent, var(--green));
+      border-radius: 10px;
+      padding: 14px;
+      flex-shrink: 0;
+    }
+    .brand-card h3 { font-size: 14px; display: flex; justify-content: space-between; margin-bottom: 10px; }
+    .brand-card .count { font-size: 11px; color: var(--muted); font-weight: 500; }
+    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .metric { background: var(--surface-2); padding: 8px; border-radius: 6px; }
+    .metric label { display: block; font-size: 10px; color: var(--muted); text-transform: uppercase; }
+    .metric span { font-size: 15px; font-weight: 700; }
+    .seg-split { display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: var(--muted); }
+
+    /* Live Sessions Banner */
+    .section-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 1.4s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .live-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .live-card {
+      background: var(--surface);
+      border: 1px solid rgba(17,179,74,0.45);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .live-thumb { width: 100%; height: 140px; object-fit: cover; border-radius: 6px; background: #000; border: 1px solid var(--border); }
+
+    /* Toolbar & Table */
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    input[type="text"], select, input[type="datetime-local"] {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .date-group { margin-bottom: 18px; }
+    .date-header {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      font-size: 13px;
+    }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th { background: var(--surface-2); color: var(--muted); font-size: 11px; text-transform: uppercase; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--surface-2);
+    }
+    .swatch { width: 8px; height: 8px; border-radius: 50%; }
+    .status-completed { color: #3dd68c; }
+    .status-failed { color: #ff7b7f; }
+    .status-stopped { color: #f5a524; }
+    .status-running { color: #60a5fa; }
+
+    /* Drawer */
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+      display: none; justify-content: flex-end; z-index: 40;
+    }
+    .drawer-backdrop.open { display: flex; }
+    .drawer {
+      width: min(560px, 100%);
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .drawer-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+    .drawer img { width: 100%; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 14px; background: #000; }
+    .transcript { display: flex; flex-direction: column; gap: 8px; }
+    .msg { padding: 9px 12px; border-radius: 8px; font-size: 13px; max-width: 90%; }
+    .msg.user { align-self: flex-end; background: rgba(17,179,74,0.2); border: 1px solid rgba(17,179,74,0.4); }
+    .msg.bot, .msg.agent { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); }
+    .msg.agent { border-color: #60a5fa; }
+    .msg.system { align-self: center; font-size: 11px; color: var(--muted); }
+    .msg small { display: block; font-size: 10px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; }
+
+    /* Modals */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      display: none; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: min(500px, 94%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .modal h2 { font-size: 16px; margin-bottom: 14px; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .brand-checks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .brand-check {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--surface-2); padding: 8px 10px; border-radius: 8px;
+      border: 1px solid var(--border); font-size: 13px; cursor: pointer;
+    }
+    .modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    .sched-item {
+      display: flex; justify-content: space-between; align-items: center;
+      background: var(--surface-2); padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; font-size: 12px;
+    }
+    .empty { color: var(--muted); text-align: center; padding: 36px; background: var(--surface); border-radius: 10px; border: 1px solid var(--border); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand-title">
+      <h1>Comp Chat</h1>
+      <span id="browserStatus" class="pill">Checking Chromium...</span>
+    </div>
+    <div class="actions">
+      <button onclick="openScheduleModal()">Schedules</button>
+      <button onclick="window.location='/api/export'">Export Excel</button>
+      <button class="primary" onclick="openLaunchModal()">+ Run Chat Test</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="cardsRow" class="cards-row"></div>
+
+    <div id="liveSection" style="display:none;">
+      <div class="section-title"><span class="dot"></span> Live Chromium Sessions</div>
+      <div id="liveGrid" class="live-grid"></div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filters">
+        <input id="searchInput" type="text" placeholder="Search transcripts..." oninput="renderHistory()" />
+        <select id="filterBrand" onchange="renderHistory()"><option value="">All Brands</option></select>
+        <select id="filterSegment" onchange="renderHistory()">
+          <option value="">All Segments</option>
+          <option value="Billing">Billing</option>
+          <option value="Sales">Sales</option>
+        </select>
+        <select id="filterLang" onchange="renderHistory()">
+          <option value="">EN + FR</option>
+          <option value="EN">EN</option>
+          <option value="FR">FR</option>
+        </select>
+      </div>
+      <div>
+        <button id="bulkDeleteBtn" class="danger sm" style="display:none;" onclick="bulkDelete()">Delete Selected</button>
+      </div>
+    </div>
+
+    <div id="historyContainer"></div>
+  </main>
+
+  <!-- Inspection Drawer -->
+  <div id="drawerBackdrop" class="drawer-backdrop" onclick="if(event.target===this) closeDrawer()">
+    <div class="drawer">
+      <div class="drawer-head">
+        <div>
+          <h2 id="drawerTitle" style="font-size:16px;"></h2>
+          <div id="drawerSub" style="font-size:12px;color:var(--muted);"></div>
+        </div>
+        <button class="sm" onclick="closeDrawer()">Close</button>
+      </div>
+      <img id="drawerImg" style="display:none;" alt="Chromium Viewport" />
+      <div id="drawerMetrics" class="metric-grid" style="margin-bottom:14px;"></div>
+      <div class="section-title">Transcript</div>
+      <div id="drawerTranscript" class="transcript"></div>
+    </div>
+  </div>
+
+  <!-- Launch Modal -->
+  <div id="launchModal" class="modal-backdrop" onclick="if(event.target===this) closeLaunchModal()">
+    <div class="modal">
+      <h2>Launch Chat Test</h2>
+      <div class="field">
+        <label>Select Carriers</label>
+        <div id="launchBrands" class="brand-checks"></div>
+      </div>
+      <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label>Segment</label>
+          <select id="launchSegment" style="width:100%;">
+            <option value="Billing">Billing</option>
+            <option value="Sales">Sales</option>
+          </select>
+        </div>
+        <div>
+          <label>Language</label>
+          <select id="launchLang" style="width:100%;">
+            <option value="EN">English (EN)</option>
+            <option value="FR">French (FR)</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Custom URL Override (optional)</label>
+        <input id="launchUrl" type="text" style="width:100%;" placeholder="Leave blank to use default carrier chat URL" />
+      </div>
+      <div class="modal-foot">
+        <button onclick="closeLaunchModal()">Cancel</button>
+        <button class="primary" onclick="startChats()">Start in Chromium</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule Modal -->
+  <div id="scheduleModal" class="modal-backdrop" onclick="if(event.target===this) closeScheduleModal()">
+    <div class="modal">
+      <h2>Scheduled Runs</h2>
+      <div class="field">
+        <label>Carriers</label>
+        <div id="schedBrands" class="brand-checks"></div>
+      </div>
+      <div class="field" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label>Segment</label>
+          <select id="schedSegment" style="width:100%;"><option>Billing</option><option>Sales</option></select>
+        </div>
+        <div>
+          <label>Language</label>
+          <select id="schedLang" style="width:100%;"><option>EN</option><option>FR</option></select>
+        </div>
+      </div>
+      <div class="field">
+        <label>Run Date &amp; Time</label>
+        <input id="schedTime" type="datetime-local" style="width:100%;" />
+      </div>
+      <div id="schedWarning" style="color:#f5a524;font-size:12px;margin-bottom:8px;"></div>
+      <button class="primary sm" onclick="createSchedule(false)">Add Schedule</button>
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
+      <div id="schedList"></div>
+      <div class="modal-foot"><button onclick="closeScheduleModal()">Done</button></div>
+    </div>
+  </div>
+
+  <script>
+    let brands = [];
+    let activeChats = [];
+    let historyChats = [];
+    let selectedIds = new Set();
+    let inspectedId = null;
+
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const fmtSec = (v) => (v === null || v === undefined ? '—' : `${v}s`);
+
+    async function init() {
+      const cfg = await fetch('/api/config').then((r) => r.json());
+      brands = cfg.brands;
+
+      const statusEl = document.getElementById('browserStatus');
+      statusEl.textContent = cfg.browserConfigured ? 'Chromium Connected' : 'Set BROWSER_WS_ENDPOINT';
+      statusEl.className = 'pill ' + (cfg.browserConfigured ? 'ok' : 'warn');
+
+      const filterBrand = document.getElementById('filterBrand');
+      const launchBrands = document.getElementById('launchBrands');
+      const schedBrands = document.getElementById('schedBrands');
+
+      brands.forEach((b) => {
+        filterBrand.innerHTML += `<option value="${b.id}">${esc(b.name)}</option>`;
+        const chk = `
+          <label class="brand-check">
+            <input type="checkbox" value="${b.id}" />
+            <span class="swatch" style="background:${b.color}"></span>
+            ${esc(b.name)}
+          </label>`;
+        launchBrands.innerHTML += chk;
+        schedBrands.innerHTML += chk;
+      });
+
+      await refresh();
+      setInterval(refresh, 3000);
+    }
+
+    async function refresh() {
+      const data = await fetch('/api/chats').then((r) => r.json());
+      activeChats = data.active || [];
+      historyChats = data.history || [];
+      renderCards();
+      renderLive();
+      renderHistory();
+      if (inspectedId) renderDrawer();
+    }
+
+    function avg(arr) {
+      const valid = arr.filter((v) => typeof v === 'number');
+      return valid.length ? `${(valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1)}s` : '—';
+    }
+
+    function renderCards() {
+      const row = document.getElementById('cardsRow');
+      row.innerHTML = brands.map((b) => {
+        const logs = historyChats.filter((c) => c.brandId === b.id);
+        const billingWait = avg(logs.filter((c) => c.segment === 'Billing').map((c) => c.agentWaitSec));
+        const salesWait = avg(logs.filter((c) => c.segment === 'Sales').map((c) => c.agentWaitSec));
+        return `
+          <div class="brand-card" style="--accent:${b.color}">
+            <h3><span>${esc(b.name)}</span><span class="count">${logs.length} runs</span></h3>
+            <div class="metric-grid">
+              <div class="metric"><label>Bot Reply</label><span>${avg(logs.map((c) => c.botResponseSec))}</span></div>
+              <div class="metric"><label>Agent Wait</label><span>${avg(logs.map((c) => c.agentWaitSec))}</span></div>
+            </div>
+            <div class="seg-split">
+              <span>Billing: <b>${billingWait}</b></span>
+              <span>Sales: <b>${salesWait}</b></span>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function renderLive() {
+      const sec = document.getElementById('liveSection');
+      const grid = document.getElementById('liveGrid');
+      if (!activeChats.length) {
+        sec.style.display = 'none';
+        return;
+      }
+      sec.style.display = 'block';
+      grid.innerHTML = activeChats.map((c) => `
+        <div class="live-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="badge"><span class="swatch" style="background:${c.brandColor}"></span>${esc(c.brandName)} • ${c.segment} (${c.language})</span>
+            <span style="font-size:12px;color:var(--muted);">${c.totalDurationSec}s</span>
+          </div>
+          ${c.lastScreenshot ? `<img class="live-thumb" src="${c.lastScreenshot}" />` : '<div class="live-thumb" style="display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;">Waiting for frame...</div>'}
+          <div style="font-size:12px;color:var(--muted);">${esc(c.step)}</div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="sm" onclick="inspectSession('${c.id}')">Inspect Live</button>
+            <button class="danger sm" onclick="stopChat('${c.id}')">Stop</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderHistory() {
+      const q = document.getElementById('searchInput').value.toLowerCase();
+      const brand = document.getElementById('filterBrand').value;
+      const seg = document.getElementById('filterSegment').value;
+      const lang = document.getElementById('filterLang').value;
+
+      const filtered = historyChats.filter((c) => {
+        if (brand && c.brandId !== brand) return false;
+        if (seg && c.segment !== seg) return false;
+        if (lang && c.language !== lang) return false;
+        if (q) {
+          const blob = (c.brandName + ' ' + c.transcript.map((m) => m.text).join(' ')).toLowerCase();
+          if (!blob.includes(q)) return false;
+        }
+        return true;
+      });
+
+      const container = document.getElementById('historyContainer');
+      if (!filtered.length) {
+        container.innerHTML = '<div class="empty">No chat logs yet. Click <b>+ Run Chat Test</b> to launch your first session.</div>';
+        return;
+      }
+
+      const groups = {};
+      filtered.forEach((c) => {
+        const day = c.startedAt.slice(0, 10);
+        (groups[day] = groups[day] || []).push(c);
+      });
+
+      container.innerHTML = Object.entries(groups).map(([day, rows]) => `
+        <div class="date-group">
+          <div class="date-header">${day} (${rows.length})</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width:32px;"></th>
+                <th>Time</th>
+                <th>Brand</th>
+                <th>Segment</th>
+                <th>Lang</th>
+                <th>Status</th>
+                <th>Bot Reply</th>
+                <th>Agent Wait</th>
+                <th>Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((c) => `
+                <tr>
+                  <td><input type="checkbox" ${selectedIds.has(c.id) ? 'checked' : ''} onchange="toggleSelect('${c.id}', this.checked)" /></td>
+                  <td>${new Date(c.startedAt).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+                  <td><span class="badge"><span class="swatch" style="background:${c.brandColor}"></span>${esc(c.brandName)}</span></td>
+                  <td>${esc(c.segment)}</td>
+                  <td>${esc(c.language)}</td>
+                  <td class="status-${c.status}">${esc(c.status)}</td>
+                  <td>${fmtSec(c.botResponseSec)}</td>
+                  <td>${fmtSec(c.agentWaitSec)}</td>
+                  <td>${fmtSec(c.totalDurationSec)}</td>
+                  <td style="text-align:right;"><button class="sm" onclick="inspectSession('${c.id}')">Inspect</button></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`).join('');
+
+      document.getElementById('bulkDeleteBtn').style.display = selectedIds.size ? 'inline-block' : 'none';
+    }
+
+    function toggleSelect(id, checked) {
+      checked ? selectedIds.add(id) : selectedIds.delete(id);
+      document.getElementById('bulkDeleteBtn').style.display = selectedIds.size ? 'inline-block' : 'none';
+    }
+
+    async function bulkDelete() {
+      if (!confirm(`Delete ${selectedIds.size} selected chat log(s)?`)) return;
+      await fetch('/api/chats', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds) })
+      });
+      selectedIds.clear();
+      refresh();
+    }
+
+    function inspectSession(id) {
+      inspectedId = id;
+      document.getElementById('drawerBackdrop').classList.add('open');
+      renderDrawer();
+    }
+
+    function closeDrawer() {
+      inspectedId = null;
+      document.getElementById('drawerBackdrop').classList.remove('open');
+    }
+
+    function renderDrawer() {
+      const c = activeChats.find((x) => x.id === inspectedId) || historyChats.find((x) => x.id === inspectedId);
+      if (!c) return;
+      document.getElementById('drawerTitle').textContent = `${c.brandName} — ${c.segment} (${c.language})`;
+      document.getElementById('drawerSub').textContent = `${c.status.toUpperCase()} • ${c.step || ''} • ${new Date(c.startedAt).toLocaleString()}`;
+
+      const img = document.getElementById('drawerImg');
+      if (c.lastScreenshot) {
+        img.src = c.lastScreenshot;
+        img.style.display = 'block';
+      } else {
+        img.style.display = 'none';
+      }
+
+      document.getElementById('drawerMetrics').innerHTML = `
+        <div class="metric"><label>Bot Reply</label><span>${fmtSec(c.botResponseSec)}</span></div>
+        <div class="metric"><label>Agent Wait</label><span>${fmtSec(c.agentWaitSec)}</span></div>`;
+
+      document.getElementById('drawerTranscript').innerHTML = c.transcript.length
+        ? c.transcript.map((m) => `
+            <div class="msg ${m.sender}">
+              <small>${m.sender} • ${new Date(m.time).toLocaleTimeString()}</small>
+              ${esc(m.text)}
+            </div>`).join('')
+        : '<div style="color:var(--muted);font-size:13px;">No messages captured yet.</div>';
+    }
+
+    function openLaunchModal() { document.getElementById('launchModal').classList.add('open'); }
+    function closeLaunchModal() { document.getElementById('launchModal').classList.remove('open'); }
+
+    async function startChats() {
+      const brandIds = Array.from(document.querySelectorAll('#launchBrands input:checked')).map((i) => i.value);
+      if (!brandIds.length) return alert('Select at least one carrier.');
+      await fetch('/api/chats/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brandIds,
+          segment: document.getElementById('launchSegment').value,
+          language: document.getElementById('launchLang').value,
+          customUrl: document.getElementById('launchUrl').value.trim()
+        })
+      });
+      closeLaunchModal();
+      refresh();
+    }
+
+    async function stopChat(id) {
+      await fetch(`/api/chats/${id}/stop`, { method: 'POST' });
+      refresh();
+    }
+
+    async function openScheduleModal() {
+      document.getElementById('scheduleModal').classList.add('open');
+      document.getElementById('schedWarning').textContent = '';
+      loadSchedules();
+    }
+    function closeScheduleModal() { document.getElementById('scheduleModal').classList.remove('open'); }
+
+    async function loadSchedules() {
+      const list = await fetch('/api/schedules').then((r) => r.json());
+      document.getElementById('schedList').innerHTML = list.length
+        ? list.map((s) => `
+            <div class="sched-item">
+              <div>
+                <b>${s.brandIds.join(', ')}</b> (${s.segment} / ${s.language})<br/>
+                <span style="color:var(--muted);">${new Date(s.runAt).toLocaleString()} — ${s.status}</span>
+              </div>
+              <button class="danger sm" onclick="deleteSchedule('${s.id}')">Remove</button>
+            </div>`).join('')
+        : '<div style="font-size:12px;color:var(--muted);">No scheduled runs.</div>';
+    }
+
+    async function createSchedule(force) {
+      const brandIds = Array.from(document.querySelectorAll('#schedBrands input:checked')).map((i) => i.value);
+      const runAt = document.getElementById('schedTime').value;
+      if (!brandIds.length || !runAt) return alert('Pick at least one carrier and a date/time.');
+
+      const res = await fetch('/api/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          brandIds,
+          segment: document.getElementById('schedSegment').value,
+          language: document.getElementById('schedLang').value,
+          runAt: new Date(runAt).toISOString(),
+          force
+        })
+      });
+
+      if (res.status === 409) {
+        const err = await res.json();
+        document.getElementById('schedWarning').innerHTML =
+          `${esc(err.error)} <button class="sm" style="margin-left:8px;" onclick="createSchedule(true)">Schedule Anyway</button>`;
+        return;
+      }
+      document.getElementById('schedWarning').textContent = '';
+      loadSchedules();
+    }
+
+    async function deleteSchedule(id) {
+      await fetch(`/api/schedules/${id}`, { method: 'DELETE' });
+      loadSchedules();
+    }
+
+    init();
+  </script>
+</body>
+</html>
