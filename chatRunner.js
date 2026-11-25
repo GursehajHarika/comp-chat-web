@@ -93,11 +93,26 @@ const WAIT_TIME_REGEX =
 const HOOPS_REGEX =
   /(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|h)\s*(?:to|-|–|à)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.|h))/i;
 
+const IGNORED_BUTTON_REGEX =
+  /^(close|minimize|minimise|maximize|end chat|end|send|envoyer|fermer|réduire|feedback|help|need help\??|ask anna|menu|back|x|×)$/i;
+
 async function findInFrames(page, selector) {
   for (const frame of page.frames()) {
     try {
       const loc = frame.locator(selector).first();
-      if (await loc.isVisible({ timeout: 800 })) return loc;
+      if (await loc.isVisible({ timeout: 600 })) return loc;
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function findInputWithFrame(page, selector) {
+  for (const frame of page.frames()) {
+    try {
+      const loc = frame.locator(selector).first();
+      if (await loc.isVisible({ timeout: 600 })) {
+        return { frame, locator: loc };
+      }
     } catch (_) {}
   }
   return null;
@@ -158,9 +173,12 @@ async function clickBottomRightLauncher(page) {
   return true;
 }
 
-async function scrapeMessages(page, selector) {
+async function scrapeMessages(page, selector, inputSelector) {
+  const foundInput = await findInputWithFrame(page, inputSelector);
+  const framesToCheck = foundInput ? [foundInput.frame] : page.frames();
   const texts = [];
-  for (const frame of page.frames()) {
+
+  for (const frame of framesToCheck) {
     try {
       const items = await frame.locator(selector).allInnerTexts();
       for (const raw of items) {
@@ -174,47 +192,156 @@ async function scrapeMessages(page, selector) {
   return texts;
 }
 
-async function scrapeQuickReplyButtons(page) {
-  const labels = [];
-  const btnSelector =
-    '[class*="quick-reply"] button, [class*="quickReply"] button, [class*="chat"] button:not([type="submit"]), [role="dialog"] button:not([type="submit"])';
-  for (const frame of page.frames()) {
+// Finds clickable chat option buttons scoped to the chat frame or chat container around #chatMessage
+async function getChatOptionButtons(page, inputSelector) {
+  const found = await findInputWithFrame(page, inputSelector);
+  const frames = found ? [found.frame] : page.frames();
+  const results = [];
+
+  for (const frame of frames) {
+    const isMain = frame === page.mainFrame();
     try {
-      const buttons = frame.locator(btnSelector);
-      const count = Math.min(await buttons.count(), 12);
-      for (let i = 0; i < count; i++) {
-        const btn = buttons.nth(i);
-        if (!(await btn.isVisible({ timeout: 200 }).catch(() => false))) continue;
-        const txt = (await btn.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
-        if (txt.length >= 2 && txt.length <= 60 && !labels.includes(txt)) {
-          labels.push(txt);
-        }
+      const items = await frame.evaluate(
+        ({ sel, isMainFrame }) => {
+          let root = document.body;
+          if (isMainFrame) {
+            const inputEl = document.querySelector(sel);
+            if (inputEl) {
+              // Walk up from #chatMessage to find the enclosing chat panel (narrower than full page)
+              let cur = inputEl.parentElement;
+              let best = cur;
+              while (cur && cur !== document.body) {
+                const r = cur.getBoundingClientRect();
+                if (r.width >= 260 && r.width <= 650 && r.height >= 260) {
+                  best = cur;
+                }
+                cur = cur.parentElement;
+              }
+              root = best || inputEl.parentElement || document.body;
+            }
+          }
+
+          const candidates = root.querySelectorAll(
+            'button, [role="button"], a, li, div, span'
+          );
+          const out = [];
+          const seen = new Set();
+
+          for (const el of candidates) {
+            const style = window.getComputedStyle(el);
+            if (
+              style.display === 'none' ||
+              style.visibility === 'hidden' ||
+              Number(style.opacity) === 0 ||
+              el.disabled
+            ) {
+              continue;
+            }
+
+            const tag = el.tagName;
+            const isExplicit =
+              tag === 'BUTTON' ||
+              tag === 'A' ||
+              el.getAttribute('role') === 'button' ||
+              el.hasAttribute('tabindex');
+            const isPointer = style.cursor === 'pointer';
+
+            if (!isExplicit && !isPointer) continue;
+
+            // Avoid selecting container wrappers that hold nested clickable elements
+            if (!isExplicit && el.querySelector('button, a, [role="button"], input, textarea')) {
+              continue;
+            }
+
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 24 || rect.width > 460 || rect.height < 18 || rect.height > 96) {
+              continue;
+            }
+
+            const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!text || text.length < 2 || text.length > 90) continue;
+            if (seen.has(text)) continue;
+            seen.add(text);
+
+            out.push({
+              text,
+              cx: Math.round(rect.left + rect.width / 2),
+              cy: Math.round(rect.top + rect.height / 2)
+            });
+          }
+          return out;
+        },
+        { sel: inputSelector, isMainFrame: isMain }
+      );
+
+      for (const item of items) {
+        if (IGNORED_BUTTON_REGEX.test(item.text)) continue;
+        results.push({ ...item, frame });
       }
     } catch (_) {}
   }
-  return labels;
+
+  return results;
 }
 
-async function tryClickQuickReply(page, replyText) {
-  const normalized = replyText.replace(/["'.!?]/g, '').trim().toLowerCase();
-  if (!normalized || normalized.length > 60) return false;
+async function tryClickChatOption(page, replyText, inputSelector) {
+  const cleanReply = String(replyText || '')
+    .replace(/^["'`[\]()]+|["'`[\]()]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleanReply) return null;
 
-  for (const frame of page.frames()) {
-    try {
-      const buttons = frame.locator('button, [role="button"]');
-      const count = Math.min(await buttons.count(), 25);
-      for (let i = 0; i < count; i++) {
-        const btn = buttons.nth(i);
-        if (!(await btn.isVisible({ timeout: 150 }).catch(() => false))) continue;
-        const txt = (await btn.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
-        if (txt && txt.toLowerCase() === normalized) {
-          await btn.click({ timeout: 3000 });
-          return true;
-        }
-      }
-    } catch (_) {}
+  const options = await getChatOptionButtons(page, inputSelector);
+  if (!options.length) return null;
+
+  const targetLower = cleanReply.toLowerCase();
+
+  // 1. Exact case-insensitive match
+  let match = options.find((o) => o.text.toLowerCase() === targetLower);
+  // 2. Substring match (handles Vapi adding/dropping minor words or punctuation)
+  if (!match) {
+    match = options.find(
+      (o) =>
+        o.text.toLowerCase().includes(targetLower) ||
+        targetLower.includes(o.text.toLowerCase())
+    );
   }
-  return false;
+  if (!match) return null;
+
+  try {
+    const loc = match.frame.getByText(match.text, { exact: true }).first();
+    if (await loc.isVisible({ timeout: 1000 })) {
+      await loc.click({ timeout: 4000 });
+      return match.text;
+    }
+  } catch (_) {}
+
+  // Coordinate click inside the frame as fallback
+  try {
+    const frameEl = await match.frame.frameElement().catch(() => null);
+    if (frameEl) {
+      const box = await frameEl.boundingBox();
+      if (box) {
+        await page.mouse.click(box.x + match.cx, box.y + match.cy);
+        return match.text;
+      }
+    } else {
+      await page.mouse.click(match.cx, match.cy);
+      return match.text;
+    }
+  } catch (_) {}
+
+  return null;
+}
+
+async function isChatInputEnabled(page, inputSelector) {
+  const found = await findInputWithFrame(page, inputSelector);
+  if (!found) return false;
+  try {
+    return await found.locator.isEnabled({ timeout: 500 });
+  } catch (_) {
+    return false;
+  }
 }
 
 async function detectChatSystem(page) {
@@ -242,7 +369,7 @@ async function runChatSession(
   const endpoint = getBrowserEndpoint();
   const aiMaxDurationMs = Number(process.env.MAX_CHAT_DURATION_SEC || 240) * 1000;
   const manualMaxDurationMs = Number(process.env.MAX_MANUAL_DURATION_SEC || 900) * 1000;
-  const maxVapiTurns = Number(process.env.MAX_VAPI_TURNS || 12);
+  const maxVapiTurns = Number(process.env.MAX_VAPI_TURNS || 15);
   const startedAt = Date.now();
   const pathSteps = [];
 
@@ -266,12 +393,12 @@ async function runChatSession(
   let page;
   let screenshotTimer;
 
-  // Shared state for mid-chat human takeover
   const seenMessages = new Set();
   const sentByUs = new Set();
   const pendingManualNotes = [];
   let firstMessageSentAt = null;
   let vapiStarted = false;
+  let lastButtonsKey = '';
   let actionLock = Promise.resolve();
 
   const enqueueAction = (fn) => {
@@ -292,39 +419,55 @@ async function runChatSession(
   const sendToCarrier = async (replyText, senderRole = 'assistant') => {
     if (!page || !replyText) return false;
     return enqueueAction(async () => {
-      const clickedBtn = await tryClickQuickReply(page, replyText);
-      if (clickedBtn) {
+      // 1. Always try matching an on-screen chat option button first
+      const clickedLabel = await tryClickChatOption(page, replyText, brandCfg.selectors.input);
+      if (clickedLabel) {
+        sentByUs.add(clickedLabel);
         sentByUs.add(replyText);
-        pathSteps.push(`${senderRole === 'operator' ? 'Manual' : 'AI'} clicked "${replyText}"`);
-        pushTranscript(senderRole, `[Button] ${replyText}`);
-      } else {
-        const activeInput = await findInFrames(page, brandCfg.selectors.input);
-        if (!activeInput) {
-          if (senderRole === 'operator') {
-            pushTranscript('system', 'No chat input found yet — click the screenshot to open the chat box first.');
-          }
-          return false;
-        }
-        await activeInput.fill(replyText);
-        await activeInput.press('Enter').catch(async () => {
+        pathSteps.push(`${senderRole === 'operator' ? 'Manual' : 'AI'} clicked "${clickedLabel}"`);
+        pushTranscript(senderRole, `[Clicked] ${clickedLabel}`);
+        if (!firstMessageSentAt) firstMessageSentAt = Date.now();
+        if (senderRole === 'operator') pendingManualNotes.push(`Clicked "${clickedLabel}"`);
+        await page.waitForTimeout(1500);
+        await captureFrame();
+        return true;
+      }
+
+      // 2. Otherwise type into the chat input ONLY if it is enabled (never crash on disabled textarea)
+      const found = await findInputWithFrame(page, brandCfg.selectors.input);
+      const enabled = found ? await found.locator.isEnabled({ timeout: 500 }).catch(() => false) : false;
+
+      if (!found || !enabled) {
+        const opts = (await getChatOptionButtons(page, brandCfg.selectors.input)).map((o) => o.text);
+        pushTranscript(
+          'system',
+          `Text box is currently disabled — must click an on-screen option first.${
+            opts.length ? ` Available: ${opts.join(' | ')}` : ''
+          }`
+        );
+        return false;
+      }
+
+      try {
+        await found.locator.fill(replyText, { timeout: 5000 });
+        await found.locator.press('Enter').catch(async () => {
           const sendBtn = await findInFrames(page, brandCfg.selectors.send);
-          if (sendBtn) await sendBtn.click().catch(() => {});
+          if (sendBtn) await sendBtn.click({ timeout: 3000 }).catch(() => {});
         });
         sentByUs.add(replyText);
         pushTranscript(senderRole, replyText);
+        if (!firstMessageSentAt) firstMessageSentAt = Date.now();
+        if (senderRole === 'operator') pendingManualNotes.push(replyText);
+        await page.waitForTimeout(1000);
+        await captureFrame();
+        return true;
+      } catch (fillErr) {
+        pushTranscript('system', `Could not type message (${fillErr.message.split('\n')[0]})`);
+        return false;
       }
-
-      if (!firstMessageSentAt) firstMessageSentAt = Date.now();
-      if (senderRole === 'operator') {
-        pendingManualNotes.push(replyText);
-      }
-      await page.waitForTimeout(800);
-      await captureFrame();
-      return true;
     });
   };
 
-  // Expose live mid-chat controls to server.js
   onRegisterController?.({
     setAiPaused: (paused) => {
       chat.aiPaused = Boolean(paused);
@@ -360,7 +503,6 @@ async function runChatSession(
     chat.status = 'in-progress';
     onUpdate();
 
-    // 1. Initialize Vapi Chat Session (still allow pure manual mode if Vapi isn't configured)
     let vapi = null;
     try {
       vapi = await createVapiSession(s);
@@ -377,7 +519,6 @@ async function runChatSession(
       onUpdate();
     }
 
-    // 2. Connect to Browserless Chromium
     browser = await chromium.connectOverCDP(endpoint, { timeout: 25000 });
     context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
@@ -400,7 +541,7 @@ async function runChatSession(
 
     screenshotTimer = setInterval(captureFrame, 3000);
 
-    // 3. Click launcher (Need Help? / bottom-right yellow icon)
+    // Click launcher (Need Help? / bottom-right yellow icon)
     const launcher = await waitForInFrames(page, brandCfg.selectors.openChat, 15000);
     if (launcher) {
       await launcher
@@ -426,7 +567,6 @@ async function runChatSession(
     s.systemUsed = await detectChatSystem(page);
     onUpdate();
 
-    // 4. Live monitoring + Vapi / Human Takeover loop
     let turns = 0;
     let botReplied = false;
     let agentConnected = false;
@@ -435,58 +575,60 @@ async function runChatSession(
     if (!initialInput) {
       pushTranscript(
         'system',
-        'Chat input not auto-detected yet — click the screenshot or Take Over to navigate manually.'
+        'Chat widget not detected yet — click the screenshot or Take Over to navigate manually.'
       );
     }
+
+    const buildVapiPrompt = ({ header, msgs, btns, inputEnabled, manualNote }) => {
+      const lines = [];
+      if (header) lines.push(header);
+      if (manualNote) lines.push(manualNote);
+      if (msgs.length) lines.push(`Carrier said: ${msgs.join(' | ')}`);
+      if (btns.length) {
+        lines.push(`On-screen buttons: ${btns.map((b) => `"${b}"`).join(', ')}`);
+      }
+      if (!inputEnabled && btns.length) {
+        lines.push(
+          'IMPORTANT: The text input is DISABLED until you click one of the on-screen buttons above. Reply with ONLY the exact text of the single button you want to click (do not write a sentence).'
+        );
+      } else if (btns.length) {
+        lines.push(
+          'Reply with either the exact text of one of the buttons above OR a short message to type.'
+        );
+      }
+      return lines.join('\n');
+    };
 
     while (!shouldStop()) {
       const elapsed = Date.now() - startedAt;
       const limit = chat.aiPaused ? manualMaxDurationMs : aiMaxDurationMs;
       if (elapsed >= limit) break;
+
       if (!chat.aiPaused && turns >= maxVapiTurns) {
-        pushTranscript('system', 'Max AI turns reached — switching to Human Takeover so you can finish or end chat.');
+        pushTranscript('system', 'Max AI turns reached — switching to Human Takeover.');
         chat.aiPaused = true;
         onUpdate();
       }
 
-      // Send Vapi's opening message once chat input is visible and AI is active
-      if (vapi && !vapiStarted && !chat.aiPaused) {
-        const inputReady = await findInFrames(page, brandCfg.selectors.input);
-        if (inputReady) {
-          const initialMsgs = await scrapeMessages(page, brandCfg.selectors.messages);
-          const initialBtns = await scrapeQuickReplyButtons(page);
-          initialMsgs.forEach((m) => {
-            if (!seenMessages.has(m)) {
-              seenMessages.add(m);
-              pushTranscript('user', m);
-            }
-          });
+      const currentMessages = await scrapeMessages(
+        page,
+        brandCfg.selectors.messages,
+        brandCfg.selectors.input
+      );
+      const currentButtons = (await getChatOptionButtons(page, brandCfg.selectors.input)).map(
+        (o) => o.text
+      );
+      const inputEnabled = await isChatInputEnabled(page, brandCfg.selectors.input);
+      const buttonsKey = currentButtons.join('||');
 
-          const openingContext = [
-            `Chat opened on ${s.brand} (${s.segment} - ${s.useCase} - ${s.language}).`,
-            initialMsgs.length ? `Carrier greeting: ${initialMsgs.join(' | ')}` : 'No greeting yet.',
-            initialBtns.length ? `Available quick-reply buttons: ${initialBtns.join(', ')}` : ''
-          ]
-            .filter(Boolean)
-            .join('\n');
-
-          vapiStarted = true;
-          const firstReply = await askVapiChat(vapi.sessionId, openingContext);
-          if (!chat.aiPaused && firstReply) {
-            await sendToCarrier(firstReply, 'assistant');
-            turns++;
-          }
-        }
-      }
-
-      await page.waitForTimeout(2500);
-      if (shouldStop()) break;
-
-      const currentMessages = await scrapeMessages(page, brandCfg.selectors.messages);
       const freshBatch = [];
-
       for (const msg of currentMessages) {
         if (seenMessages.has(msg) || sentByUs.has(msg)) continue;
+        // Skip duplicating pure button text as a chat bubble if it matches a current button
+        if (currentButtons.includes(msg)) {
+          seenMessages.add(msg);
+          continue;
+        }
         seenMessages.add(msg);
         freshBatch.push(msg);
 
@@ -515,37 +657,51 @@ async function runChatSession(
         }
       }
 
-      // If agent joined while AI is in control, stop cleanly; during Human Takeover, stay open for you
+      const buttonsChanged = Boolean(buttonsKey && buttonsKey !== lastButtonsKey);
+      if (buttonsChanged) {
+        lastButtonsKey = buttonsKey;
+        pushTranscript('system', `Detected options: ${currentButtons.join(' | ')}`);
+      }
+
       if (agentConnected && !chat.aiPaused) break;
 
-      // Only ask Vapi to reply when AI is engaged
-      if (vapi && !chat.aiPaused && freshBatch.length > 0) {
-        const btns = await scrapeQuickReplyButtons(page);
-        const manualContext = pendingManualNotes.length
-          ? `Note: Human operator manually sent earlier: ${pendingManualNotes.splice(0).join(' | ')}`
+      const chatIsReady = inputEnabled || currentButtons.length > 0;
+      const shouldAskVapi =
+        vapi &&
+        !chat.aiPaused &&
+        chatIsReady &&
+        (!vapiStarted || freshBatch.length > 0 || buttonsChanged);
+
+      if (shouldAskVapi) {
+        const manualNote = pendingManualNotes.length
+          ? `Note: Human operator manually did earlier: ${pendingManualNotes.splice(0).join(' | ')}`
           : '';
 
-        const vapiInput = [
-          manualContext,
-          `Carrier said: ${freshBatch.join(' | ')}`,
-          btns.length ? `Available buttons: ${btns.join(', ')}` : ''
-        ]
-          .filter(Boolean)
-          .join('\n');
+        const prompt = buildVapiPrompt({
+          header: !vapiStarted
+            ? `Chat opened on ${s.brand} (${s.segment} - ${s.useCase} - ${s.language}).`
+            : '',
+          msgs: freshBatch,
+          btns: currentButtons,
+          inputEnabled,
+          manualNote
+        });
 
-        const vapiReply = await askVapiChat(vapi.sessionId, vapiInput);
-        if (chat.aiPaused) continue; // Operator took over while Vapi was thinking
+        vapiStarted = true;
+        const vapiReply = await askVapiChat(vapi.sessionId, prompt);
 
-        if (/\[END_CHAT\]/i.test(vapiReply)) {
-          pathSteps.push('Vapi ended chat');
-          pushTranscript('system', 'Vapi assistant signaled end of chat.');
-          break;
-        }
-        if (vapiReply) {
-          await sendToCarrier(vapiReply, 'assistant');
-          turns++;
+        if (!chat.aiPaused && vapiReply) {
+          if (/\[END_CHAT\]/i.test(vapiReply)) {
+            pathSteps.push('Vapi ended chat');
+            pushTranscript('system', 'Vapi assistant signaled end of chat.');
+            break;
+          }
+          const ok = await sendToCarrier(vapiReply, 'assistant');
+          if (ok) turns++;
         }
       }
+
+      await page.waitForTimeout(2500);
     }
 
     if (!agentConnected && !s.cxToAgent) {
